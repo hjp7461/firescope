@@ -1,5 +1,13 @@
 import { useState } from "react";
-import { Play, Plus, RotateCcw, Code2, Clock } from "lucide-react";
+import {
+  Play,
+  Plus,
+  RotateCcw,
+  Code2,
+  Clock,
+  Filter,
+  CaseSensitive,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -43,6 +51,81 @@ function SectionHeader({
         <Plus className="size-3" />
         추가
       </Button>
+    </div>
+  );
+}
+
+function PostFilterSection() {
+  const pf = useQueryStore((s) => s.postFilter);
+  const update = useQueryStore((s) => s.updatePostFilter);
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-1.5">
+        <Filter className="size-3 text-muted-foreground" />
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          후처리 검색
+        </span>
+        <span className="text-[10px] text-muted-foreground">
+          (가져온 결과를 클라이언트에서 필터 — limit 권장)
+        </span>
+      </div>
+
+      <div className="flex items-center gap-1.5">
+        <Select
+          value={pf.kind}
+          onValueChange={(v) => update({ kind: v as "regex" | "contains" })}
+        >
+          <SelectTrigger
+            className="h-7 w-[110px] text-xs"
+            aria-label="후처리 종류"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="regex" className="text-xs">
+              정규식
+            </SelectItem>
+            <SelectItem value="contains" className="text-xs">
+              포함
+            </SelectItem>
+          </SelectContent>
+        </Select>
+        <Input
+          value={pf.fields}
+          onChange={(e) => update({ fields: e.target.value })}
+          placeholder="필드 (쉼표 구분, 예: name, profile.city)"
+          className="h-7 w-[40%] text-xs"
+          aria-label="후처리 필드"
+        />
+        <Input
+          value={pf.pattern}
+          onChange={(e) => update({ pattern: e.target.value })}
+          placeholder={pf.kind === "regex" ? "정규식 패턴" : "포함 문자열"}
+          className="h-7 flex-1 text-xs"
+          aria-label="후처리 패턴"
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant={pf.caseInsensitive ? "secondary" : "ghost"}
+          className="h-7 gap-1 px-2 text-xs"
+          aria-pressed={pf.caseInsensitive}
+          title="대소문자 무시"
+          onClick={() => update({ caseInsensitive: !pf.caseInsensitive })}
+        >
+          <CaseSensitive className="size-3.5" />
+          Aa
+        </Button>
+      </div>
+
+      <Input
+        value={pf.jsonpath}
+        onChange={(e) => update({ jsonpath: e.target.value })}
+        placeholder="JSONPath (선택, 예: $.tags[?@ == 'urgent'])"
+        className="h-7 text-xs"
+        aria-label="후처리 JSONPath"
+      />
     </div>
   );
 }
@@ -195,6 +278,10 @@ export function QueryBuilder() {
                 ))
               )}
             </div>
+
+            <Separator />
+
+            <PostFilterSection />
 
             {error && (
               <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-xs text-destructive">

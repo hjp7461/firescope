@@ -112,12 +112,9 @@ pub fn validate(dsl: &QueryDsl) -> AppResult<()> {
         }
     }
 
-    // 7) post_filter.regex.pattern 컴파일 가능
+    // 7) post_filter.regex / jsonpath 컴파일 가능 (단일 컴파일 소스).
     if let Some(pf) = &dsl.post_filter {
-        if let Some(rx) = &pf.regex {
-            regex::Regex::new(&rx.pattern)
-                .map_err(|_| invalid("post_filter regex pattern does not compile"))?;
-        }
+        crate::query::post_filter::compile(pf)?;
     }
 
     Ok(())
@@ -287,6 +284,17 @@ mod tests {
     fn bad_select_field_rejected() {
         let mut q = base();
         q.select = vec!["a..b".into()];
+        assert!(validate(&q).is_err());
+    }
+
+    #[test]
+    fn uncompilable_jsonpath_rejected() {
+        let mut q = base();
+        q.post_filter = Some(PostFilter {
+            regex: None,
+            contains: None,
+            jsonpath: Some("$[".into()),
+        });
         assert!(validate(&q).is_err());
     }
 

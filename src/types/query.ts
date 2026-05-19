@@ -93,7 +93,10 @@ export type QueryHistoryEntry = {
 // query_documents 이벤트 페이로드 (`query:chunk|done|error:<stream_id>`).
 export type QueryChunk = { docs: FirestoreDocument[]; page: number };
 export type QueryDone = {
+  /** post_filter 통과(매칭) 건수 = 수신한 chunk 합계. */
   total: number;
+  /** Firestore에서 가져온 전체 건수 (post_filter 없으면 total과 동일). */
+  scanned: number;
   took_ms: number;
   has_more: boolean;
 };

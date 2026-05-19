@@ -20,6 +20,7 @@ export function ResultBar({
   const status = useResultStore((s) => s.status);
   const rows = useResultStore((s) => s.rows.length);
   const total = useResultStore((s) => s.total);
+  const scanned = useResultStore((s) => s.scanned);
   const tookMs = useResultStore((s) => s.tookMs);
   const error = useResultStore((s) => s.error);
   const cancel = useResultStore((s) => s.cancel);
@@ -60,7 +61,10 @@ export function ResultBar({
         )}
         {status === "done" && (
           <span className="text-muted-foreground">
-            {total}건{tookMs != null ? ` · ${tookMs}ms` : ""}
+            {scanned > total
+              ? `전체 ${scanned}건 중 ${total}건 매칭`
+              : `${total}건`}
+            {tookMs != null ? ` · ${tookMs}ms` : ""}
           </span>
         )}
         {status === "error" && (

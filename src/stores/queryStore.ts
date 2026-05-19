@@ -2,7 +2,9 @@ import { create } from "zustand";
 import type { CompareOp } from "@/types";
 import {
   buildDsl,
+  EMPTY_POST_FILTER,
   type BuildResult,
+  type DraftPostFilter,
   type DraftValueType,
   type DraftWhere,
   type QueryDraft,
@@ -21,6 +23,7 @@ type QueryState = QueryDraft & {
   ) => void;
   removeOrderBy: (i: number) => void;
   setLimit: (n: number) => void;
+  updatePostFilter: (patch: Partial<DraftPostFilter>) => void;
   reset: () => void;
   /** 드래프트를 컬렉션 클릭 등 외부 컨텍스트로 채운다. */
   loadFromTarget: (kind: QueryDraft["targetKind"], target: string) => void;
@@ -42,6 +45,7 @@ const initial: QueryDraft = {
   wheres: [],
   orderBys: [],
   limit: 100,
+  postFilter: { ...EMPTY_POST_FILTER },
 };
 
 export const useQueryStore = create<QueryState>((set, get) => ({
@@ -74,10 +78,20 @@ export const useQueryStore = create<QueryState>((set, get) => ({
 
   setLimit: (limit) => set({ limit: Number.isFinite(limit) ? limit : 0 }),
 
-  reset: () => set({ ...initial }),
+  updatePostFilter: (patch) =>
+    set((s) => ({ postFilter: { ...s.postFilter, ...patch } })),
+
+  reset: () => set({ ...initial, postFilter: { ...EMPTY_POST_FILTER } }),
 
   loadFromTarget: (targetKind, target) =>
-    set({ targetKind, target, wheres: [], orderBys: [], limit: 100 }),
+    set({
+      targetKind,
+      target,
+      wheres: [],
+      orderBys: [],
+      limit: 100,
+      postFilter: { ...EMPTY_POST_FILTER },
+    }),
 
   hydrate: (d) =>
     set({
@@ -86,6 +100,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       wheres: d.wheres.map((w) => ({ ...w })),
       orderBys: d.orderBys.map((o) => ({ ...o })),
       limit: d.limit,
+      postFilter: { ...d.postFilter },
     }),
 
   build: () => {
@@ -96,6 +111,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       wheres: s.wheres,
       orderBys: s.orderBys,
       limit: s.limit,
+      postFilter: s.postFilter,
     });
   },
 }));
