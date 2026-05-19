@@ -9,8 +9,9 @@ use tracing_subscriber::layer::Context;
 use tracing_subscriber::Layer;
 
 /// 로그에 실어도 안전한 구조화 필드 (값 누출 방지 화이트리스트).
+/// NOTE: "message"와 "profile_id"는 record_debug에서 먼저 특별 처리되므로 여기 없어도 됨.
 const ALLOWED: &[&str] = &[
-    "message", "collection", "count", "took_ms", "profile_id",
+    "message", "collection", "count", "took_ms",
     "expires_at", "target", "stream_id", "op", "mode",
 ];
 
@@ -31,20 +32,29 @@ struct FieldVisitor {
     extra: Vec<String>,
 }
 
-impl Visit for FieldVisitor {
-    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-        let name = field.name();
-        let val = format!("{value:?}");
-        let val = val.trim_matches('"').to_string();
+impl FieldVisitor {
+    /// 필드 이름과 Debug 값을 받아 분류·저장한다.
+    /// 비허용 필드는 `value`를 절대 포맷하지 않고 `<omitted>` 리터럴만 기록한다.
+    fn put_field(&mut self, name: &str, value: &dyn std::fmt::Debug) {
         if name == "message" {
-            self.message = val;
+            let v = format!("{value:?}");
+            self.message = v.trim_matches('"').to_string();
         } else if name == "profile_id" {
-            self.profile_id = Some(val);
+            let v = format!("{value:?}");
+            self.profile_id = Some(v.trim_matches('"').to_string());
         } else if ALLOWED.contains(&name) {
-            self.extra.push(format!("{name}={val}"));
+            let v = format!("{value:?}");
+            self.extra.push(format!("{name}={}", v.trim_matches('"')));
         } else {
+            // 비허용 필드: value에 절대 접근하지 않는다 (원칙 5).
             self.extra.push(format!("{name}=<omitted>"));
         }
+    }
+}
+
+impl Visit for FieldVisitor {
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        self.put_field(field.name(), value);
     }
 }
 
@@ -109,5 +119,30 @@ mod tests {
         let e = render(&tracing::Level::WARN, "t", v);
         assert!(e.message.contains("password=<omitted>"));
         assert!(!e.message.contains("hunter2"));
+    }
+
+    /// put_field 실제 분류 경로를 검증:
+    /// 비허용 필드의 값은 FieldVisitor 어디에도 나타나지 않아야 한다 (원칙 5).
+    #[test]
+    fn put_field_non_whitelisted_never_materializes_value() {
+        let mut v = FieldVisitor::default();
+        // "password"는 ALLOWED에 없으므로 값("hunter2")은 절대 포맷되어선 안 된다.
+        v.put_field("password", &"hunter2");
+
+        // (a) extra 엔트리는 정확히 "password=<omitted>" 이어야 한다.
+        assert_eq!(v.extra, vec!["password=<omitted>".to_string()]);
+
+        // (b) visitor 전체 상태에 비밀값이 없어야 한다.
+        assert!(!v.message.contains("hunter2"));
+        assert!(v.profile_id.as_deref().unwrap_or("").is_empty() || !v.profile_id.as_deref().unwrap().contains("hunter2"));
+        for entry in &v.extra {
+            assert!(!entry.contains("hunter2"), "extra entry leaked secret: {entry}");
+        }
+
+        // (c) render 이후 최종 출력에도 비밀값이 없어야 한다.
+        v.message = "baseline".into();
+        let e = render(&tracing::Level::ERROR, "t", v);
+        assert!(!e.message.contains("hunter2"), "rendered message leaked secret: {}", e.message);
+        assert!(e.message.contains("password=<omitted>"));
     }
 }
