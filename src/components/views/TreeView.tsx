@@ -4,7 +4,9 @@ import { ChevronRight, ChevronDown } from "lucide-react";
 import { useResultStore } from "@/stores/resultStore";
 import { buildTree, type TreeNode } from "@/lib/tree";
 import { useElementSize } from "@/lib/useElementSize";
-import { cn } from "@/lib/utils";
+
+const ROW_HEIGHT = 30;
+const HEADER_HEIGHT = 30; // sticky Key/Value/Type 헤더 높이
 
 function Row({ node, style }: NodeRendererProps<TreeNode>) {
   const d = node.data;
@@ -26,7 +28,7 @@ function Row({ node, style }: NodeRendererProps<TreeNode>) {
       <div className="w-[45%] truncate px-2 py-1.5 text-muted-foreground" title={d.valuePreview}>
         {d.valuePreview}
       </div>
-      <div className={cn("w-24 shrink-0 px-2 py-1.5 text-right", "text-primary/70")}>
+      <div className="w-24 shrink-0 px-2 py-1.5 text-right text-primary/70">
         {d.typeLabel}
       </div>
     </div>
@@ -59,8 +61,8 @@ export function TreeView() {
           idAccessor="id"
           openByDefault={false}
           width={width}
-          height={height - 30}
-          rowHeight={30}
+          height={height - HEADER_HEIGHT}
+          rowHeight={ROW_HEIGHT}
           indent={16}
         >
           {Row}
