@@ -6,9 +6,6 @@ Firebase Studio의 Firestore 검색 한계를 보완하는 **읽기 전용 Fires
 정교한 쿼리 UI와 **다중 프로젝트 프로파일**로 운영/스테이징/에뮬레이터를 한 곳에서 안전하게 들여다봅니다.
 UX는 [Firefoo](https://www.firefoo.com/)를 참고했습니다.
 
-> ⚠️ **이 저장소는 Claude Code 스타트킷입니다.**
-> 실제 코드는 아직 작성되지 않았으며, Claude Code에서 `/kickoff` 명령으로 시작합니다.
-
 ## 핵심 특징
 
 - 🔒 **읽기 전용** — 쓰기/수정/삭제 API 미구현
@@ -21,67 +18,60 @@ UX는 [Firefoo](https://www.firefoo.com/)를 참고했습니다.
 
 ## 기술 스택
 
-- **Backend**: Rust 1.80+ / Tauri 2.11 / firestore 0.44 / gcp_auth / keyring / secrecy / tokio
-- **Frontend**: React 18 + TypeScript 5 + Vite 5 / TanStack Table / Zustand / Tailwind + shadcn/ui
+- **Backend**: Rust / Tauri 2.11 / firestore 0.44 / gcp_auth / keyring / secrecy / tokio
+- **Frontend**: React 19 + TypeScript 5 + Vite 7 / TanStack Table + Virtual / Zustand / Tailwind + shadcn/ui
 - **Infra**: Docker Compose (Firestore + Auth Emulator)
 
-자세한 내용은 [`CLAUDE.md`](./CLAUDE.md) 및 [`docs/`](./docs) 참조.
+## 개발 환경
 
-### 주요 문서
-- [01-setup.md](./docs/01-setup.md) — 개발 환경 셋업
-- [02-architecture.md](./docs/02-architecture.md) — 레이어/IPC/인증 구조
-- [03-ipc-contract.md](./docs/03-ipc-contract.md) — Tauri 명령 명세
-- [04-query-dsl.md](./docs/04-query-dsl.md) — 쿼리 DSL 스펙
-- [05-emulator.md](./docs/05-emulator.md) — Docker 에뮬레이터 운영
-- [06-roadmap.md](./docs/06-roadmap.md) — Phase별 작업 체크리스트
-- **[07-profiles.md](./docs/07-profiles.md) — 다중 프로파일 / 자격증명 관리**
-
-## Claude Code로 시작하기
+요구 사항: Rust 1.80+, Node.js 20+, pnpm, Docker.
 
 ```bash
-cd firescope
-claude
-```
-세션에서:
-```
-/kickoff
-```
+# 1) 로컬 Firestore/Auth 에뮬레이터 기동
+docker compose -f docker/docker-compose.yml up -d
 
-### 주요 슬래시 명령
-
-| 명령 | 용도 |
-|------|------|
-| `/kickoff` | 현재 Phase 작업 시작 |
-| `/add-command <이름>` | 새 Tauri IPC 명령 추가 워크플로 |
-| `/add-profile-mode <모드>` | 새 인증 모드(예: oauth_user) 추가 워크플로 |
-| `/check-readonly` | 읽기 전용 원칙 자가 검증 |
-| `/check-credential-leak` | 자격증명 누출 자가 검증 |
-| `/phase-complete` | 현재 Phase 마무리 + 다음 단계 안내 |
-
-## 수동 셋업
-
-```bash
+# 2) 의존성 설치
 pnpm install
-pnpm emulator:up
+
+# 3) 데스크탑 앱 실행 (개발 모드)
 pnpm tauri dev
+```
+
+개발 시 사용하는 에뮬레이터 환경변수:
+
+```bash
+FIRESTORE_EMULATOR_HOST=localhost:8080
+FIREBASE_AUTH_EMULATOR_HOST=localhost:9099
+GCLOUD_PROJECT=demo-firescope
+```
+
+`docker/seed.sh`로 샘플 데이터(users/posts)를 에뮬레이터에 적재할 수 있습니다.
+
+빌드:
+
+```bash
+pnpm build        # 프론트엔드 타입체크 + 번들
+pnpm tauri build  # 데스크탑 바이너리 패키징
 ```
 
 ## 디렉토리 구조
 
 | 경로 | 설명 |
 |------|------|
-| `CLAUDE.md` | Claude Code 진입점 |
-| `docs/` | 셋업/아키텍처/IPC/DSL/에뮬레이터/로드맵/**프로파일** 문서 |
-| `.claude/` | Claude Code 설정과 슬래시 명령 |
-| `docker/` | Firebase Emulator Docker 설정 |
-| `src-tauri/` | Rust 백엔드 (Phase 0~1에서 생성) |
-| `src/` | React 프론트엔드 (Phase 0~1에서 생성) |
+| `docker/` | Firebase Emulator Docker 설정 + 시드 스크립트 |
+| `src-tauri/` | Rust 백엔드 (Tauri IPC / 인증 / 프로파일 / Firestore / 쿼리) |
+| `src/` | React 프론트엔드 (UI / 스토어 / IPC 래퍼 / 타입) |
 
-## 로드맵 요약
+## 로드맵
 
-0. 스캐폴딩 → **1. 프로파일 관리 기반** → 2. 기본 조회 + Table → 3. Tree/JSON/Log → 4. 정교한 쿼리 빌더 → 5. 후처리 검색 → 6. Export/편의 → 7. 다듬기/배포
-
-상세는 [`docs/06-roadmap.md`](./docs/06-roadmap.md).
+- [x] **Phase 0** — 스캐폴딩 (Tauri + Vite + shadcn/ui)
+- [x] **Phase 1** — 프로파일 관리 기반 (CRUD + OS Vault + 세션)
+- [x] **Phase 2** — 기본 조회 + Table 뷰 (스트리밍 + 가상화 테이블)
+- [ ] **Phase 3** — Tree / JSON / Log 뷰 + 뷰 전환 탭
+- [ ] **Phase 4** — 정교한 쿼리 빌더 (전체 연산자 + 히스토리)
+- [ ] **Phase 5** — 클라이언트 후처리 검색 (정규식/contains)
+- [ ] **Phase 6** — Export & 편의 기능
+- [ ] **Phase 7** — 다듬기 & 배포
 
 ## 보안 약속
 
