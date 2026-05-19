@@ -19,7 +19,7 @@ struct TokenRefreshed {
     expires_at: DateTime<Utc>,
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn activate_profile(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -37,17 +37,17 @@ pub async fn activate_profile(
         .await
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn current_session(state: State<'_, AppState>) -> AppResult<Option<Session>> {
     Ok(state.sessions.current())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn deactivate(app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
     state.sessions.deactivate(&app)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn refresh_token(app: AppHandle, state: State<'_, AppState>) -> AppResult<RefreshResult> {
     let (profile_id, expires_at) = state.sessions.refresh_token().await?;
     let _ = app.emit(

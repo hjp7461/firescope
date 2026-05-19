@@ -87,17 +87,17 @@ struct PortableBundle {
     profiles: Vec<PortableProfile>,
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn list_profiles(state: State<'_, AppState>) -> AppResult<Vec<ProfileMeta>> {
     Ok(state.profiles.list())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn get_profile(state: State<'_, AppState>, profile_id: Uuid) -> AppResult<Option<ProfileMeta>> {
     Ok(state.profiles.get_meta(profile_id))
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn create_profile(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -108,7 +108,7 @@ pub fn create_profile(
     Ok(meta)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn update_profile(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -119,7 +119,7 @@ pub fn update_profile(
     Ok(meta)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn delete_profile(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -143,7 +143,7 @@ struct DeletedPayload {
     profile_id: Uuid,
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn duplicate_profile(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -155,7 +155,7 @@ pub fn duplicate_profile(
     Ok(meta)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn set_credential(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -173,7 +173,7 @@ pub fn set_credential(
     })
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn clear_credential(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -190,7 +190,7 @@ pub fn clear_credential(
 
 /// 실제 활성화 없이 연결 가능 여부 검증. 모드별 검증 로직은
 /// `firestore::probe`(도메인)에 있고 이 커맨드는 얇은 어댑터다 (원칙 4).
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn test_profile(state: State<'_, AppState>, profile_id: Uuid) -> AppResult<TestResult> {
     let profile = state
         .profiles
@@ -205,7 +205,7 @@ pub async fn test_profile(state: State<'_, AppState>, profile_id: Uuid) -> AppRe
     })
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn export_profiles(
     state: State<'_, AppState>,
     profile_ids: Option<Vec<Uuid>>,
@@ -242,7 +242,7 @@ pub fn export_profiles(
     })
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn import_profiles(
     app: AppHandle,
     state: State<'_, AppState>,
