@@ -11,7 +11,20 @@ import { activateProfile, currentSession } from "@/ipc/session";
 import { asAppError, type ProfileMeta, type Session } from "@/types";
 import { CollectionsPanel } from "@/components/views/CollectionsPanel";
 import { TableView } from "@/components/views/TableView";
+import { TreeView } from "@/components/views/TreeView";
+import { JsonView } from "@/components/views/JsonView";
+import { LogView } from "@/components/views/LogView";
 import { ResultBar } from "@/components/views/ResultBar";
+import { useViewStore } from "@/stores/viewStore";
+import { startLogStream } from "@/stores/logStore";
+
+function ResultPane() {
+  const view = useViewStore((s) => s.activeView);
+  if (view === "tree") return <TreeView />;
+  if (view === "json") return <JsonView />;
+  if (view === "log") return <LogView />;
+  return <TableView />;
+}
 
 function App() {
   const loadProfiles = useProfileStore((s) => s.load);
@@ -25,12 +38,13 @@ function App() {
   const [editing, setEditing] = useState<ProfileMeta | null>(null);
   const [pendingProd, setPendingProd] = useState<ProfileMeta | null>(null);
 
-  // 진입: 프로파일 목록 + 기존 세션 복구.
+  // 진입: 프로파일 목록 + 기존 세션 복구 + 로그 스트림 시작.
   useEffect(() => {
     loadProfiles();
     currentSession()
       .then(setCurrent)
       .catch(() => setCurrent(null));
+    void startLogStream();
   }, [loadProfiles, setCurrent]);
 
   // 백엔드 이벤트 구독 (원칙 10: 상태는 이벤트로 자동 동기화).
@@ -133,7 +147,7 @@ function App() {
                 mode={session.mode}
               />
               <div className="min-w-0 flex-1 overflow-hidden">
-                <TableView />
+                <ResultPane />
               </div>
             </div>
           </div>
