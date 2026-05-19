@@ -6,6 +6,7 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { cn } from "@/lib/utils";
 import { useResultStore } from "@/stores/resultStore";
 import { renderValue, type FirestoreDocument } from "@/types";
 
@@ -23,7 +24,15 @@ export function TableView() {
     return [
       col.accessor("id", {
         header: "id",
-        cell: (c) => <span className="font-mono text-xs">{c.getValue()}</span>,
+        size: 220,
+        cell: (c) => {
+          const id = c.getValue();
+          return (
+            <span className="font-mono text-xs" title={id}>
+              {id}
+            </span>
+          );
+        },
       }),
       ...[...keys].map((k) =>
         col.display({
@@ -31,13 +40,12 @@ export function TableView() {
           header: k,
           cell: ({ row }) => {
             const v = row.original.data[k];
+            if (v === undefined)
+              return <span className="text-muted-foreground">—</span>;
+            const text = renderValue(v);
             return (
-              <span className="text-xs" title={v ? renderValue(v) : ""}>
-                {v === undefined ? (
-                  <span className="text-muted-foreground">—</span>
-                ) : (
-                  renderValue(v)
-                )}
+              <span className="text-xs" title={text}>
+                {text}
               </span>
             );
           },
@@ -49,6 +57,8 @@ export function TableView() {
   const table = useReactTable({
     data: rows,
     columns,
+    defaultColumn: { size: 180, minSize: 64, maxSize: 800 },
+    columnResizeMode: "onChange",
     getCoreRowModel: getCoreRowModel(),
   });
 
@@ -69,59 +79,71 @@ export function TableView() {
     );
   }
 
-  const virtualRows = virtualizer.getVirtualItems();
+  const totalWidth = table.getTotalSize();
 
   return (
     <div ref={parentRef} className="h-full overflow-auto">
-      <table className="w-full border-collapse text-left">
-        <thead className="sticky top-0 z-10 bg-background">
-          {table.getHeaderGroups().map((hg) => (
-            <tr key={hg.id} className="border-b">
-              {hg.headers.map((h) => (
-                <th
-                  key={h.id}
-                  className="whitespace-nowrap px-3 py-1.5 text-xs font-semibold"
-                >
-                  {flexRender(h.column.columnDef.header, h.getContext())}
-                </th>
-              ))}
-            </tr>
+      <div style={{ width: totalWidth, position: "relative" }}>
+        {/* 헤더 (sticky) — 컬럼 경계 드래그로 폭 조정 */}
+        <div className="sticky top-0 z-10 flex border-b bg-background">
+          {table.getFlatHeaders().map((h) => (
+            <div
+              key={h.id}
+              className="relative shrink-0 px-3 py-1.5 text-xs font-semibold"
+              style={{ width: h.getSize() }}
+            >
+              <span className="block truncate">
+                {flexRender(h.column.columnDef.header, h.getContext())}
+              </span>
+              <div
+                onMouseDown={h.getResizeHandler()}
+                onTouchStart={h.getResizeHandler()}
+                className={cn(
+                  "absolute right-0 top-0 h-full w-1 cursor-col-resize select-none touch-none hover:bg-primary/40",
+                  h.column.getIsResizing() && "bg-primary",
+                )}
+              />
+            </div>
           ))}
-        </thead>
-        <tbody
+        </div>
+
+        {/* 가상화 바디 */}
+        <div
           style={{
-            height: `${virtualizer.getTotalSize()}px`,
+            height: virtualizer.getTotalSize(),
             position: "relative",
-            display: "block",
           }}
         >
-          {virtualRows.map((vr) => {
+          {virtualizer.getVirtualItems().map((vr) => {
             const r = tableRows[vr.index];
             return (
-              <tr
+              <div
                 key={r.id}
-                className="absolute flex w-full border-b hover:bg-accent/40"
+                className="absolute flex border-b hover:bg-accent/40"
                 style={{
-                  height: `${ROW_HEIGHT}px`,
+                  top: 0,
+                  height: ROW_HEIGHT,
+                  width: totalWidth,
                   transform: `translateY(${vr.start}px)`,
                 }}
               >
                 {r.getVisibleCells().map((cell) => (
-                  <td
+                  <div
                     key={cell.id}
-                    className="flex-1 truncate px-3 py-1.5"
+                    className="shrink-0 truncate px-3 py-1.5"
+                    style={{ width: cell.column.getSize() }}
                   >
                     {flexRender(
                       cell.column.columnDef.cell,
                       cell.getContext(),
                     )}
-                  </td>
+                  </div>
                 ))}
-              </tr>
+              </div>
             );
           })}
-        </tbody>
-      </table>
+        </div>
+      </div>
     </div>
   );
 }
