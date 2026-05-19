@@ -12,9 +12,20 @@ services:
       - "8080:8080"   # Firestore
       - "9099:9099"   # Auth
       - "9150:9150"   # Hub
-    command: >
-      emulators:start
-      --only firestore,auth
-      --project demo-firescope
-      --import=./seed
-      --export-on-exit=./seed
+    # 첫 실행 시 seed/에 export가 없으므로 --import는 메타데이터가 있을 때만
+    # 붙인다 (없는데 붙이면 에뮬레이터가 즉시 종료됨). clean shutdown 시
+    # --export-on-exit로 seed/에 기록되어 다음 실행부터 자동 복구된다.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        firebase emulators:start
+        --only firestore,auth
+        --project demo-firescope
+        --export-on-exit=./seed
+        $(test -f ./seed/firebase-export-metadata.json && echo --import=./seed)
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 25s
