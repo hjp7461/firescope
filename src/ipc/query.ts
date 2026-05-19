@@ -1,7 +1,11 @@
-// 컬렉션/문서/쿼리 IPC 래퍼 (`docs/03-ipc-contract.md` §3·§4).
+// 컬렉션/문서/쿼리/히스토리 IPC 래퍼 (`docs/03-ipc-contract.md` §3·§4·§8).
 
 import { call } from "./index";
-import type { FirestoreDocument, QueryDsl } from "@/types";
+import type {
+  FirestoreDocument,
+  QueryDsl,
+  QueryHistoryEntry,
+} from "@/types";
 
 export const listCollections = () =>
   call<string[]>("list_collections");
@@ -18,3 +22,24 @@ export const queryDocuments = (streamId: string, dsl: QueryDsl) =>
 
 export const cancelStream = (streamId: string) =>
   call<void>("cancel_stream", { stream_id: streamId });
+
+// --- 쿼리 히스토리 (`docs/03-ipc-contract.md` §8) ---
+
+export const listQueryHistory = (profileId: string) =>
+  call<QueryHistoryEntry[]>("list_query_history", { profile_id: profileId });
+
+export const addQueryHistory = (params: {
+  profile_id: string;
+  dsl: QueryDsl;
+  took_ms?: number;
+  result_count?: number;
+}) => call<QueryHistoryEntry>("add_query_history", { params });
+
+export const removeQueryHistory = (profileId: string, entryId: string) =>
+  call<void>("remove_query_history", {
+    profile_id: profileId,
+    entry_id: entryId,
+  });
+
+export const clearQueryHistory = (profileId: string) =>
+  call<void>("clear_query_history", { profile_id: profileId });

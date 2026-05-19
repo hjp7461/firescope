@@ -16,8 +16,9 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
 use crate::adapters::log_layer::LogLayer;
-use crate::adapters::TauriProfileRepository;
+use crate::adapters::{TauriProfileRepository, TauriQueryHistoryRepository};
 use crate::profile::{OsKeyringVault, ProfileManager};
+use crate::query::history::QueryHistoryManager;
 use crate::state::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -43,7 +44,12 @@ pub fn run() {
             let repo = Arc::new(TauriProfileRepository::new(store));
             let vault = Arc::new(OsKeyringVault::new());
             let profiles = ProfileManager::new(repo, vault)?;
-            app.manage(AppState::new(profiles));
+
+            let history_store = app.store("query-history.json")?;
+            let history_repo = Arc::new(TauriQueryHistoryRepository::new(history_store));
+            let history = QueryHistoryManager::new(history_repo)?;
+
+            app.manage(AppState::new(profiles, history));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -67,6 +73,10 @@ pub fn run() {
             commands::query::get_document,
             commands::query::query_documents,
             commands::query::cancel_stream,
+            commands::query::list_query_history,
+            commands::query::add_query_history,
+            commands::query::remove_query_history,
+            commands::query::clear_query_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

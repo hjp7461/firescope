@@ -134,6 +134,8 @@ pub fn delete_profile(
         state.sessions.deactivate(&app)?;
     }
     state.profiles.delete(profile_id)?;
+    // 프로파일에 종속된 로컬 데이터(쿼리 히스토리)도 함께 정리 (orphan 방지).
+    let _ = state.history.clear(profile_id);
     let _ = app.emit("profile:deleted", DeletedPayload { profile_id });
     Ok(())
 }
