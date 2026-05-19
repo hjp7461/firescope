@@ -1,17 +1,13 @@
 //! 프로파일 관리 커맨드 (`docs/03-ipc-contract.md` §1).
 
-use std::net::{TcpStream, ToSocketAddrs};
-use std::time::{Duration, Instant};
-
 use chrono::Utc;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State, Wry};
+use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
-use crate::auth::ServiceAccountAuth;
 use crate::error::{AppError, AppResult};
-use crate::firestore::FirestoreClient;
+use crate::firestore::probe;
 use crate::profile::{
     CreateProfileParams, Credential, ProfileMeta, ProfileMode, UpdateProfileParams,
 };
@@ -92,22 +88,19 @@ struct PortableBundle {
 }
 
 #[tauri::command]
-pub fn list_profiles(state: State<'_, AppState<Wry>>) -> AppResult<Vec<ProfileMeta>> {
+pub fn list_profiles(state: State<'_, AppState>) -> AppResult<Vec<ProfileMeta>> {
     Ok(state.profiles.list())
 }
 
 #[tauri::command]
-pub fn get_profile(
-    state: State<'_, AppState<Wry>>,
-    profile_id: Uuid,
-) -> AppResult<Option<ProfileMeta>> {
+pub fn get_profile(state: State<'_, AppState>, profile_id: Uuid) -> AppResult<Option<ProfileMeta>> {
     Ok(state.profiles.get_meta(profile_id))
 }
 
 #[tauri::command]
 pub fn create_profile(
-    app: AppHandle<Wry>,
-    state: State<'_, AppState<Wry>>,
+    app: AppHandle,
+    state: State<'_, AppState>,
     params: CreateProfileParams,
 ) -> AppResult<ProfileMeta> {
     let meta = state.profiles.create(params)?;
@@ -117,8 +110,8 @@ pub fn create_profile(
 
 #[tauri::command]
 pub fn update_profile(
-    app: AppHandle<Wry>,
-    state: State<'_, AppState<Wry>>,
+    app: AppHandle,
+    state: State<'_, AppState>,
     params: UpdateProfileParams,
 ) -> AppResult<ProfileMeta> {
     let meta = state.profiles.update(params)?;
@@ -128,8 +121,8 @@ pub fn update_profile(
 
 #[tauri::command]
 pub fn delete_profile(
-    app: AppHandle<Wry>,
-    state: State<'_, AppState<Wry>>,
+    app: AppHandle,
+    state: State<'_, AppState>,
     profile_id: Uuid,
 ) -> AppResult<()> {
     // 활성 프로파일을 지우면 세션도 함께 정리한다 (이벤트는 deactivate가 emit).
@@ -152,8 +145,8 @@ struct DeletedPayload {
 
 #[tauri::command]
 pub fn duplicate_profile(
-    app: AppHandle<Wry>,
-    state: State<'_, AppState<Wry>>,
+    app: AppHandle,
+    state: State<'_, AppState>,
     profile_id: Uuid,
     new_name: String,
 ) -> AppResult<ProfileMeta> {
@@ -164,8 +157,8 @@ pub fn duplicate_profile(
 
 #[tauri::command]
 pub fn set_credential(
-    app: AppHandle<Wry>,
-    state: State<'_, AppState<Wry>>,
+    app: AppHandle,
+    state: State<'_, AppState>,
     profile_id: Uuid,
     credential: CredentialInput,
 ) -> AppResult<CredentialStatus> {
@@ -182,8 +175,8 @@ pub fn set_credential(
 
 #[tauri::command]
 pub fn clear_credential(
-    app: AppHandle<Wry>,
-    state: State<'_, AppState<Wry>>,
+    app: AppHandle,
+    state: State<'_, AppState>,
     profile_id: Uuid,
 ) -> AppResult<CredentialStatus> {
     state.profiles.clear_credential(profile_id)?;
@@ -195,83 +188,26 @@ pub fn clear_credential(
     })
 }
 
-/// 실제 활성화 없이 연결 가능 여부 검증.
-///
-/// Phase 1 범위: service_account는 실제 토큰 왕복으로 검증, emulator는
-/// 호스트 TCP 도달성 확인, id_token은 자격증명 존재 확인. 루트 컬렉션
-/// fetch는 라이브 클라이언트가 생기는 Phase 2에서 강화된다.
+/// 실제 활성화 없이 연결 가능 여부 검증. 모드별 검증 로직은
+/// `firestore::probe`(도메인)에 있고 이 커맨드는 얇은 어댑터다 (원칙 4).
 #[tauri::command]
-pub async fn test_profile(
-    app: AppHandle<Wry>,
-    state: State<'_, AppState<Wry>>,
-    profile_id: Uuid,
-) -> AppResult<TestResult> {
+pub async fn test_profile(state: State<'_, AppState>, profile_id: Uuid) -> AppResult<TestResult> {
     let profile = state
         .profiles
         .get_profile(profile_id)
         .ok_or_else(|| AppError::profile_not_found(format!("no profile with id {profile_id}")))?;
-    let started = Instant::now();
-
-    match profile.mode {
-        ProfileMode::Emulator => {
-            let client = FirestoreClient::connect(&profile)?;
-            let url = client.emulator_url.unwrap_or_default();
-            let hostport = url
-                .trim_start_matches("http://")
-                .trim_start_matches("https://");
-            let addr = hostport
-                .to_socket_addrs()
-                .map_err(|_| AppError::Firestore {
-                    message: format!("cannot resolve emulator host '{hostport}'"),
-                })?
-                .next()
-                .ok_or_else(|| AppError::Firestore {
-                    message: format!("no address for emulator host '{hostport}'"),
-                })?;
-            TcpStream::connect_timeout(&addr, Duration::from_secs(3)).map_err(|_| {
-                AppError::Firestore {
-                    message: format!("emulator unreachable at '{hostport}'"),
-                }
-            })?;
-        }
-        ProfileMode::ServiceAccount => {
-            let cred = state.profiles.credential(profile_id)?.ok_or_else(|| {
-                AppError::credential_not_found("service account profile has no stored credential")
-            })?;
-            match cred {
-                Credential::ServiceAccount { json } => {
-                    // 실제 토큰 왕복 = 자격증명 검증. 핸들은 즉시 폐기(태스크 abort).
-                    let _auth = ServiceAccountAuth::new(&json, app.clone(), profile_id).await?;
-                }
-                Credential::IdToken { .. } => {
-                    return Err(AppError::credential_invalid(
-                        "stored credential kind does not match profile mode (service_account)",
-                    ));
-                }
-            }
-        }
-        ProfileMode::IdToken => {
-            let cred = state.profiles.credential(profile_id)?.ok_or_else(|| {
-                AppError::credential_not_found("id_token profile has no stored credential")
-            })?;
-            if !matches!(cred, Credential::IdToken { .. }) {
-                return Err(AppError::credential_invalid(
-                    "stored credential kind does not match profile mode (id_token)",
-                ));
-            }
-        }
-    }
-
+    let credential = state.profiles.credential(profile_id)?;
+    let latency_ms = probe(&profile, credential).await?;
     Ok(TestResult {
         ok: true,
         project_id: profile.project_id,
-        latency_ms: started.elapsed().as_millis() as u64,
+        latency_ms,
     })
 }
 
 #[tauri::command]
 pub fn export_profiles(
-    state: State<'_, AppState<Wry>>,
+    state: State<'_, AppState>,
     profile_ids: Option<Vec<Uuid>>,
     path: String,
 ) -> AppResult<ExportResult> {
@@ -308,8 +244,8 @@ pub fn export_profiles(
 
 #[tauri::command]
 pub fn import_profiles(
-    app: AppHandle<Wry>,
-    state: State<'_, AppState<Wry>>,
+    app: AppHandle,
+    state: State<'_, AppState>,
     path: String,
 ) -> AppResult<ImportResult> {
     let raw = std::fs::read_to_string(&path)

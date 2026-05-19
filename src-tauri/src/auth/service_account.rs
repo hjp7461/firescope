@@ -1,5 +1,8 @@
 //! 서비스 계정 모드 — `gcp_auth`로 액세스 토큰 발급 + 자동 갱신.
 //!
+//! 원칙 4: 순수 도메인 — `tauri::*`를 import하지 않는다. 토큰 수명주기
+//! 알림은 [`TokenEventSink`] 포트로만 보낸다.
+//!
 //! 보안: `gcp_auth::Error`의 `Display`는 내부 `serde_json::Error`를 통해
 //! 입력(서비스 계정 JSON, 즉 private_key)을 일부 노출할 수 있다. 따라서
 //! gcp_auth 에러는 **절대 그대로 전파하지 않고** 일반 메시지로 치환한다.
@@ -12,11 +15,10 @@ use futures::future::BoxFuture;
 use gcp_auth::{CustomServiceAccount, TokenProvider};
 use parking_lot::RwLock;
 use secrecy::{ExposeSecret, SecretString};
-use tauri::{Emitter, Runtime};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-use crate::auth::{AuthHandle, FIRESTORE_SCOPES};
+use crate::auth::{AuthHandle, TokenEventSink, FIRESTORE_SCOPES};
 use crate::error::{AppError, AppResult};
 use crate::profile::ProfileMode;
 
@@ -33,17 +35,6 @@ struct CachedToken {
     expires_at: DateTime<Utc>,
 }
 
-#[derive(serde::Serialize, Clone)]
-struct TokenRefreshed {
-    profile_id: Uuid,
-    expires_at: DateTime<Utc>,
-}
-
-#[derive(serde::Serialize, Clone)]
-struct TokenExpired {
-    profile_id: Uuid,
-}
-
 pub struct ServiceAccountAuth {
     provider: Arc<CustomServiceAccount>,
     cache: Arc<RwLock<CachedToken>>,
@@ -54,28 +45,19 @@ impl ServiceAccountAuth {
     /// 서비스 계정 JSON으로 초기화. **즉시 1회 토큰을 발급**하여
     /// 자격증명의 실제 유효성을 검증하고(잘못된 키면 여기서 실패),
     /// 이후 만료 5분 전 자동 갱신 태스크를 띄운다.
-    pub async fn new<R: Runtime>(
+    pub async fn new(
         account_json: &SecretString,
-        app: tauri::AppHandle<R>,
+        sink: Arc<dyn TokenEventSink>,
         profile_id: Uuid,
     ) -> AppResult<Self> {
-        // expose는 이 호출에만 한정. 파싱 실패 메시지에 본문이 새지 않도록
-        // gcp_auth 에러는 통째로 폐기하고 일반 메시지로 치환한다.
-        let provider =
-            CustomServiceAccount::from_json(account_json.expose_secret()).map_err(|_| {
-                AppError::Auth {
-                    message: "failed to load service account credentials".into(),
-                }
-            })?;
-        let provider = Arc::new(provider);
-
+        let provider = Self::provider_from(account_json)?;
         let initial = Self::fetch(&provider).await?;
         let cache = Arc::new(RwLock::new(initial));
 
         let refresh_task = tokio::spawn(Self::refresh_loop(
             Arc::clone(&provider),
             Arc::clone(&cache),
-            app,
+            sink,
             profile_id,
         ));
 
@@ -84,6 +66,25 @@ impl ServiceAccountAuth {
             cache,
             refresh_task,
         })
+    }
+
+    /// 백그라운드 태스크/sink 없이 자격증명만 1회 검증한다 (test_profile용).
+    /// 성공 시 토큰 만료 시각 반환.
+    pub async fn validate(account_json: &SecretString) -> AppResult<DateTime<Utc>> {
+        let provider = Self::provider_from(account_json)?;
+        Ok(Self::fetch(&provider).await?.expires_at)
+    }
+
+    fn provider_from(account_json: &SecretString) -> AppResult<Arc<CustomServiceAccount>> {
+        // expose는 이 호출에만 한정. 파싱 실패 메시지에 본문이 새지 않도록
+        // gcp_auth 에러는 통째로 폐기하고 일반 메시지로 치환한다.
+        let provider =
+            CustomServiceAccount::from_json(account_json.expose_secret()).map_err(|_| {
+                AppError::Auth {
+                    message: "failed to load service account credentials".into(),
+                }
+            })?;
+        Ok(Arc::new(provider))
     }
 
     /// 토큰 1회 발급. 토큰 문자열은 메시지/로그로 새지 않는다.
@@ -107,10 +108,10 @@ impl ServiceAccountAuth {
         std::time::Duration::from_secs(secs as u64)
     }
 
-    async fn refresh_loop<R: Runtime>(
+    async fn refresh_loop(
         provider: Arc<CustomServiceAccount>,
         cache: Arc<RwLock<CachedToken>>,
-        app: tauri::AppHandle<R>,
+        sink: Arc<dyn TokenEventSink>,
         profile_id: Uuid,
     ) {
         loop {
@@ -126,13 +127,7 @@ impl ServiceAccountAuth {
                         profile_id = %profile_id,
                         "service account token refreshed"
                     );
-                    let _ = app.emit(
-                        "profile:token_refreshed",
-                        TokenRefreshed {
-                            profile_id,
-                            expires_at,
-                        },
-                    );
+                    sink.token_refreshed(profile_id, expires_at);
                 }
                 Err(_) => {
                     // 에러 본문은 이미 일반화됨. 토큰/키는 어디에도 없음.
@@ -141,7 +136,7 @@ impl ServiceAccountAuth {
                         profile_id = %profile_id,
                         "token refresh failed; will retry"
                     );
-                    let _ = app.emit("profile:token_expired", TokenExpired { profile_id });
+                    sink.token_expired(profile_id);
                     tokio::time::sleep(std::time::Duration::from_secs(RETRY_BACKOFF_SECS)).await;
                 }
             }

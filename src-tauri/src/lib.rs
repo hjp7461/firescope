@@ -1,3 +1,4 @@
+mod adapters;
 mod auth;
 mod commands;
 mod error;
@@ -5,10 +6,13 @@ mod firestore;
 mod profile;
 mod state;
 
+use std::sync::Arc;
+
 use tauri::Manager;
 use tauri_plugin_store::StoreExt;
 
-use crate::profile::{CredentialVault, ProfileManager};
+use crate::adapters::TauriProfileRepository;
+use crate::profile::{OsKeyringVault, ProfileManager};
 use crate::state::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -17,9 +21,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
-            // profiles.json: tauri-plugin-store가 앱 데이터 디렉토리에 보관.
+            // 어댑터 합성 (원칙 13: AppState가 단일 진입점).
             let store = app.store("profiles.json")?;
-            let profiles = ProfileManager::load(store, CredentialVault::new())?;
+            let repo = Arc::new(TauriProfileRepository::new(store));
+            let vault = Arc::new(OsKeyringVault::new());
+            let profiles = ProfileManager::new(repo, vault)?;
             app.manage(AppState::new(profiles));
             Ok(())
         })

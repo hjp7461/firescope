@@ -12,6 +12,7 @@ use serde::Serialize;
 use tauri::{Emitter, Runtime};
 use uuid::Uuid;
 
+use crate::adapters::TauriTokenSink;
 use crate::auth::{AuthHandle, EmulatorAuth, IdTokenAuth, ServiceAccountAuth};
 use crate::error::{AppError, AppResult};
 use crate::firestore::FirestoreClient;
@@ -112,7 +113,7 @@ impl SessionManager {
     pub async fn activate<R: Runtime>(
         &self,
         app: &tauri::AppHandle<R>,
-        profiles: &ProfileManager<R>,
+        profiles: &ProfileManager,
         profile_id: Uuid,
         confirmed: bool,
     ) -> AppResult<Session> {
@@ -199,7 +200,7 @@ impl SessionManager {
     async fn build_auth<R: Runtime>(
         &self,
         app: &tauri::AppHandle<R>,
-        profiles: &ProfileManager<R>,
+        profiles: &ProfileManager,
         profile: &Profile,
     ) -> AppResult<Arc<dyn AuthHandle>> {
         match profile.mode {
@@ -213,7 +214,8 @@ impl SessionManager {
                 })?;
                 match cred {
                     Credential::ServiceAccount { json } => {
-                        let auth = ServiceAccountAuth::new(&json, app.clone(), profile.id).await?;
+                        let sink = Arc::new(TauriTokenSink::new(app.clone()));
+                        let auth = ServiceAccountAuth::new(&json, sink, profile.id).await?;
                         Ok(Arc::new(auth))
                     }
                     Credential::IdToken { .. } => Err(AppError::credential_invalid(
@@ -243,14 +245,14 @@ impl Default for SessionManager {
     }
 }
 
-/// 앱 전역 상태. `tauri::State<AppState<R>>`로 커맨드에서 접근한다.
-pub struct AppState<R: Runtime> {
-    pub profiles: ProfileManager<R>,
+/// 앱 전역 상태. `tauri::State<AppState>`로 커맨드에서 접근한다 (원칙 13).
+pub struct AppState {
+    pub profiles: ProfileManager,
     pub sessions: SessionManager,
 }
 
-impl<R: Runtime> AppState<R> {
-    pub fn new(profiles: ProfileManager<R>) -> Self {
+impl AppState {
+    pub fn new(profiles: ProfileManager) -> Self {
         Self {
             profiles,
             sessions: SessionManager::new(),

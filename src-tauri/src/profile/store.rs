@@ -1,48 +1,39 @@
-//! 프로파일 메타데이터의 단일 진입점.
+//! 프로파일 메타데이터 도메인 로직.
 //!
-//! 영속화는 `tauri-plugin-store`(`profiles.json`)에 위임하고, 읽기는
-//! 인메모리 캐시로 빠르게 처리한다. 자격증명 본문은 절대 다루지 않으며
-//! [`CredentialVault`] 키 생성/삭제만 조율한다.
+//! 순수 도메인: `tauri::*`를 import하지 않는다. 영속화는
+//! [`ProfileRepository`], 자격증명은 [`CredentialStore`] 포트에만 의존하므로
+//! 인메모리 mock으로 단위 테스트가 가능하다 (원칙 4·7).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::Utc;
 use parking_lot::RwLock;
-use tauri::Runtime;
-use tauri_plugin_store::Store;
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 use crate::profile::model::{
-    CreateProfileParams, Credential, Profile, ProfileMeta, ProfileMode, ProfileStoreData,
-    UpdateProfileParams,
+    CreateProfileParams, Credential, Profile, ProfileMeta, ProfileMode, UpdateProfileParams,
 };
-use crate::profile::vault::CredentialVault;
+use crate::profile::repository::ProfileRepository;
+use crate::profile::vault::CredentialStore;
 
-/// `profiles.json` 안에서 전체 데이터를 담는 단일 키.
-const DATA_KEY: &str = "data";
-
-pub struct ProfileManager<R: Runtime> {
-    store: Arc<Store<R>>,
-    vault: CredentialVault,
+pub struct ProfileManager {
+    repo: Arc<dyn ProfileRepository>,
+    vault: Arc<dyn CredentialStore>,
     cache: RwLock<HashMap<Uuid, Profile>>,
 }
 
-impl<R: Runtime> ProfileManager<R> {
-    /// 기존 `profiles.json`을 읽어 캐시를 채운다. 파일이 없거나 비어 있으면
-    /// 빈 상태로 시작한다.
-    pub fn load(store: Arc<Store<R>>, vault: CredentialVault) -> AppResult<Self> {
-        let data: ProfileStoreData = match store.get(DATA_KEY) {
-            Some(value) => serde_json::from_value(value).map_err(|_| {
-                AppError::io("profiles.json is corrupt or has an incompatible schema")
-            })?,
-            None => ProfileStoreData::default(),
-        };
-
+impl ProfileManager {
+    /// 영속 저장소에서 프로파일을 읽어 캐시를 채운다.
+    pub fn new(
+        repo: Arc<dyn ProfileRepository>,
+        vault: Arc<dyn CredentialStore>,
+    ) -> AppResult<Self> {
+        let data = repo.load()?;
         let cache = data.profiles.into_iter().map(|p| (p.id, p)).collect();
         Ok(Self {
-            store,
+            repo,
             vault,
             cache: RwLock::new(cache),
         })
@@ -207,8 +198,6 @@ impl<R: Runtime> ProfileManager<R> {
                 "no profile with id {id}"
             )));
         }
-        // 메타 제거가 성공했으면 자격증명도 정리. Vault 실패는 치명적이지 않지만
-        // 호출부가 알 수 있도록 전파한다(고아 자격증명 방지).
         self.vault.remove(id)?;
         self.persist()?;
         tracing::info!(target: "profile", profile_id = %id, "profile deleted");
@@ -260,25 +249,149 @@ impl<R: Runtime> ProfileManager<R> {
         }
     }
 
-    /// 캐시 전체를 `profiles.json`에 직렬화 후 디스크에 flush.
+    /// 캐시 전체를 영속 저장소에 flush.
     fn persist(&self) -> AppResult<()> {
-        let snapshot = ProfileStoreData {
+        let snapshot = crate::profile::model::ProfileStoreData {
             version: 1,
             profiles: self.cache.read().values().cloned().collect(),
             default_profile_id: None,
         };
-        let value = serde_json::to_value(&snapshot)
-            .map_err(|_| AppError::internal("failed to serialize profile store"))?;
-        self.store.set(DATA_KEY, value);
-        self.store
-            .save()
-            .map_err(|e| AppError::io(format!("failed to write profiles.json: {e}")))
+        self.repo.save(&snapshot)
     }
 }
 
 /// 운영 프로젝트 휴리스틱. `prod`/`production`이 프로젝트 ID에 포함되면
 /// 운영으로 간주한다 (보수적 기본값 — 사용자가 명시 옵션으로 덮어쓸 수 있음).
 fn project_id_looks_production(project_id: &str) -> bool {
-    let p = project_id.to_lowercase();
-    p.contains("prod")
+    project_id.to_lowercase().contains("prod")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::profile::repository::InMemoryProfileRepository;
+    use crate::profile::vault::InMemoryVault;
+    use secrecy::SecretString;
+
+    fn manager() -> ProfileManager {
+        ProfileManager::new(
+            Arc::new(InMemoryProfileRepository::new()),
+            Arc::new(InMemoryVault::new()),
+        )
+        .unwrap()
+    }
+
+    fn params(name: &str, mode: ProfileMode, project: &str) -> CreateProfileParams {
+        CreateProfileParams {
+            name: name.into(),
+            description: None,
+            project_id: project.into(),
+            mode,
+            color: None,
+            tags: None,
+            firestore_host: None,
+            auth_host: None,
+            require_confirmation: None,
+            read_only_warning: None,
+        }
+    }
+
+    #[test]
+    fn create_then_list() {
+        let m = manager();
+        let meta = m
+            .create(params("Local", ProfileMode::Emulator, "demo"))
+            .unwrap();
+        assert_eq!(meta.name, "Local");
+        assert!(!meta.has_credential);
+        assert_eq!(m.list().len(), 1);
+    }
+
+    #[test]
+    fn name_uniqueness_is_case_insensitive() {
+        let m = manager();
+        m.create(params("Prod", ProfileMode::Emulator, "demo"))
+            .unwrap();
+        let err = m
+            .create(params("  prod ", ProfileMode::Emulator, "demo"))
+            .unwrap_err();
+        assert!(matches!(err, AppError::DuplicateProfile { .. }));
+    }
+
+    #[test]
+    fn service_account_prod_project_forces_confirmation() {
+        let m = manager();
+        let meta = m
+            .create(params(
+                "Ops",
+                ProfileMode::ServiceAccount,
+                "acme-production",
+            ))
+            .unwrap();
+        assert!(meta.require_confirmation);
+        assert!(meta.read_only_warning);
+    }
+
+    #[test]
+    fn emulator_prod_name_does_not_force_confirmation() {
+        let m = manager();
+        let meta = m
+            .create(params("prod-ish", ProfileMode::Emulator, "prod-demo"))
+            .unwrap();
+        // 휴리스틱은 service_account에만 적용.
+        assert!(!meta.require_confirmation);
+    }
+
+    #[test]
+    fn set_and_clear_credential_toggles_flag() {
+        let m = manager();
+        let meta = m
+            .create(params("Tok", ProfileMode::IdToken, "demo"))
+            .unwrap();
+        m.set_credential(
+            meta.id,
+            Credential::IdToken {
+                token: SecretString::from("a.b.c".to_string()),
+            },
+        )
+        .unwrap();
+        assert!(m.has_credential(meta.id));
+        m.clear_credential(meta.id).unwrap();
+        assert!(!m.has_credential(meta.id));
+    }
+
+    #[test]
+    fn delete_also_removes_credential() {
+        let m = manager();
+        let meta = m
+            .create(params("Tok", ProfileMode::IdToken, "demo"))
+            .unwrap();
+        m.set_credential(
+            meta.id,
+            Credential::IdToken {
+                token: SecretString::from("a.b.c".to_string()),
+            },
+        )
+        .unwrap();
+        m.delete(meta.id).unwrap();
+        assert!(m.get_meta(meta.id).is_none());
+        assert!(!m.has_credential(meta.id));
+    }
+
+    #[test]
+    fn duplicate_does_not_copy_credential() {
+        let m = manager();
+        let meta = m
+            .create(params("Tok", ProfileMode::IdToken, "demo"))
+            .unwrap();
+        m.set_credential(
+            meta.id,
+            Credential::IdToken {
+                token: SecretString::from("a.b.c".to_string()),
+            },
+        )
+        .unwrap();
+        let dup = m.duplicate(meta.id, "Tok Copy".into()).unwrap();
+        assert!(!dup.has_credential);
+    }
 }

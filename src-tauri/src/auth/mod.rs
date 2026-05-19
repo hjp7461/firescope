@@ -16,6 +16,7 @@ pub mod service_account;
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use secrecy::SecretString;
+use uuid::Uuid;
 
 use crate::error::AppResult;
 use crate::profile::ProfileMode;
@@ -26,6 +27,15 @@ pub use service_account::ServiceAccountAuth;
 
 /// Firestore 액세스에 필요한 OAuth 스코프.
 pub const FIRESTORE_SCOPES: &[&str] = &["https://www.googleapis.com/auth/datastore"];
+
+/// 토큰 수명주기 알림 포트 (원칙 4: `auth/`가 `tauri::*`를 모르게 한다).
+///
+/// 백그라운드 갱신 태스크가 이 sink로만 알리고, Tauri 이벤트 emit은
+/// 어댑터(`adapters::TauriTokenSink`)가 담당한다.
+pub trait TokenEventSink: Send + Sync + 'static {
+    fn token_refreshed(&self, profile_id: Uuid, expires_at: DateTime<Utc>);
+    fn token_expired(&self, profile_id: Uuid);
+}
 
 /// 활성 세션이 보유하는 인증 핸들.
 ///

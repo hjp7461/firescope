@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State, Wry};
+use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 use crate::error::AppResult;
@@ -21,8 +21,8 @@ struct TokenRefreshed {
 
 #[tauri::command]
 pub async fn activate_profile(
-    app: AppHandle<Wry>,
-    state: State<'_, AppState<Wry>>,
+    app: AppHandle,
+    state: State<'_, AppState>,
     profile_id: Uuid,
     confirmed: Option<bool>,
 ) -> AppResult<Session> {
@@ -38,20 +38,17 @@ pub async fn activate_profile(
 }
 
 #[tauri::command]
-pub fn current_session(state: State<'_, AppState<Wry>>) -> AppResult<Option<Session>> {
+pub fn current_session(state: State<'_, AppState>) -> AppResult<Option<Session>> {
     Ok(state.sessions.current())
 }
 
 #[tauri::command]
-pub fn deactivate(app: AppHandle<Wry>, state: State<'_, AppState<Wry>>) -> AppResult<()> {
+pub fn deactivate(app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
     state.sessions.deactivate(&app)
 }
 
 #[tauri::command]
-pub async fn refresh_token(
-    app: AppHandle<Wry>,
-    state: State<'_, AppState<Wry>>,
-) -> AppResult<RefreshResult> {
+pub async fn refresh_token(app: AppHandle, state: State<'_, AppState>) -> AppResult<RefreshResult> {
     let (profile_id, expires_at) = state.sessions.refresh_token().await?;
     let _ = app.emit(
         "profile:token_refreshed",

@@ -6,8 +6,12 @@
 //! 활성화 시점에 `auth::ServiceAccountAuth`가 토큰 왕복으로 검증하므로,
 //! 라이브 클라이언트가 없어도 세션 활성화는 의미 있게 검증된다.
 
-use crate::error::AppResult;
-use crate::profile::{Profile, ProfileMode};
+use std::net::{TcpStream, ToSocketAddrs};
+use std::time::{Duration, Instant};
+
+use crate::auth::ServiceAccountAuth;
+use crate::error::{AppError, AppResult};
+use crate::profile::{Credential, Profile, ProfileMode};
 
 /// 기본 에뮬레이터 호스트 (`docs/02-architecture.md` 호스트 우선순위 3순위).
 const DEFAULT_EMULATOR_HOST: &str = "localhost:8080";
@@ -51,6 +55,70 @@ impl FirestoreClient {
             emulator_url,
         })
     }
+}
+
+/// 활성화 없이 연결 가능 여부만 검증하고 소요(ms)를 반환한다
+/// (`test_profile` 도메인 로직, 원칙 4: 커맨드에서 분리).
+///
+/// - emulator: 호스트 TCP 도달성
+/// - service_account: 실제 토큰 왕복 (`ServiceAccountAuth::validate`)
+/// - id_token: 자격증명 존재/종류 일치 확인 (서명 검증은 후속 단계)
+pub async fn probe(profile: &Profile, credential: Option<Credential>) -> AppResult<u64> {
+    let started = Instant::now();
+
+    match profile.mode {
+        ProfileMode::Emulator => {
+            let client = FirestoreClient::connect(profile)?;
+            let url = client.emulator_url.unwrap_or_default();
+            let hostport = url
+                .trim_start_matches("http://")
+                .trim_start_matches("https://");
+            let addr = hostport
+                .to_socket_addrs()
+                .map_err(|_| AppError::Firestore {
+                    message: format!("cannot resolve emulator host '{hostport}'"),
+                })?
+                .next()
+                .ok_or_else(|| AppError::Firestore {
+                    message: format!("no address for emulator host '{hostport}'"),
+                })?;
+            TcpStream::connect_timeout(&addr, Duration::from_secs(3)).map_err(|_| {
+                AppError::Firestore {
+                    message: format!("emulator unreachable at '{hostport}'"),
+                }
+            })?;
+        }
+        ProfileMode::ServiceAccount => match credential {
+            Some(Credential::ServiceAccount { json }) => {
+                ServiceAccountAuth::validate(&json).await?;
+            }
+            Some(Credential::IdToken { .. }) => {
+                return Err(AppError::credential_invalid(
+                    "stored credential kind does not match profile mode (service_account)",
+                ));
+            }
+            None => {
+                return Err(AppError::credential_not_found(
+                    "service account profile has no stored credential",
+                ));
+            }
+        },
+        ProfileMode::IdToken => match credential {
+            Some(Credential::IdToken { .. }) => {}
+            Some(Credential::ServiceAccount { .. }) => {
+                return Err(AppError::credential_invalid(
+                    "stored credential kind does not match profile mode (id_token)",
+                ));
+            }
+            None => {
+                return Err(AppError::credential_not_found(
+                    "id_token profile has no stored credential",
+                ));
+            }
+        },
+    }
+
+    Ok(started.elapsed().as_millis() as u64)
 }
 
 /// 스킴이 없으면 `http://`를 붙인다 (에뮬레이터는 평문 gRPC).

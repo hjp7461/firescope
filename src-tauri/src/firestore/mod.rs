@@ -7,4 +7,4 @@
 
 pub mod connection;
 
-pub use connection::FirestoreClient;
+pub use connection::{probe, FirestoreClient};
