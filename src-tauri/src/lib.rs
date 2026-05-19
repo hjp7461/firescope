@@ -4,6 +4,7 @@ mod commands;
 mod error;
 mod firestore;
 mod profile;
+mod query;
 mod state;
 
 use std::sync::Arc;
