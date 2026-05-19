@@ -9,11 +9,12 @@ use std::time::Instant;
 
 use firestore::FirestoreQuerySupport;
 use futures::StreamExt;
+use parking_lot::Mutex;
 use serde::Serialize;
 use tauri::{Emitter, Runtime};
 
 use crate::error::{AppError, AppResult};
-use crate::firestore::{decode_document, Document, FirestoreClient};
+use crate::firestore::{decode_document, Document, FirestoreClient, ResultSink};
 use crate::query::dsl::QueryDsl;
 use crate::query::{post_filter, translate, validate};
 use crate::state::StreamRegistry;
@@ -37,11 +38,13 @@ struct DonePayload {
 }
 
 /// 검증 → 변환 → (후처리 컴파일) → 스트리밍. 협조적 취소(레지스트리
-/// 플래그)를 청크 사이마다 확인.
+/// 플래그)를 청크 사이마다 확인. 결과는 동시에 `sink`(임시 NDJSON)에
+/// 누적되어 `export_result` IPC에서 소비된다.
 pub async fn run_query<R: Runtime>(
     app: tauri::AppHandle<R>,
     client: FirestoreClient,
     registry: Arc<StreamRegistry>,
+    sink: Option<Arc<Mutex<ResultSink>>>,
     stream_id: String,
     dsl: QueryDsl,
 ) {
@@ -95,8 +98,20 @@ pub async fn run_query<R: Runtime>(
             })?;
             let doc = decode_document(&item);
             scanned += 1;
+            let is_matched = matcher.as_ref().is_none_or(|m| m.matches(&doc.data));
+            // sink는 scanned 전체를 기록 (matched 플래그로 source 구분).
+            if let Some(sink) = sink.as_ref() {
+                if let Err(e) = sink.lock().append(&doc, is_matched) {
+                    tracing::warn!(
+                        target: "query",
+                        error = %e,
+                        stream_id = %stream_id,
+                        "failed to append to result sink"
+                    );
+                }
+            }
             // 후처리 통과 문서만 청크로 전달 (`docs/04-query-dsl.md`).
-            if matcher.as_ref().is_some_and(|m| !m.matches(&doc.data)) {
+            if !is_matched {
                 continue;
             }
             buf.push(doc);

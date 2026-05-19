@@ -4,20 +4,24 @@
 //! 없으면 `SessionManager::firestore()`가 `no_session` 에러를 반환한다.
 //! 히스토리 계열은 세션과 무관하게 프로파일별 로컬 데이터를 다룬다.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use firestore::{
     FirestoreGetByIdSupport, FirestoreListCollectionIdsParams, FirestoreListingSupport,
+    FirestoreQuerySupport,
 };
-use serde::Deserialize;
+use futures::StreamExt;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 use crate::firestore::streaming::run_query;
-use crate::firestore::{decode_document, Document};
+use crate::firestore::{decode_document, Document, ExportFormat, ExportSource};
 use crate::query::dsl::QueryDsl;
 use crate::query::history::HistoryEntry;
+use crate::query::{post_filter, translate, validate};
 use crate::state::AppState;
 
 #[tauri::command(rename_all = "snake_case")]
@@ -95,16 +99,131 @@ pub async fn query_documents(
 ) -> AppResult<()> {
     let client = state.sessions.firestore()?;
     let registry = Arc::clone(state.sessions.streams());
-    registry.register(&stream_id);
+    // 새 쿼리가 시작되면 이전 stream들의 sink를 정리한다 (원칙 5 — 운영 데이터를
+    // 디스크에 오래 두지 않음). 사용자가 export하지 않으면 자동 폐기.
+    registry.cancel_all();
+    let (_flag, sink) = registry.register(&stream_id);
     // 즉시 반환, 결과는 이벤트로 (원칙 6).
-    tokio::spawn(run_query(app, client, registry, stream_id, dsl));
+    tokio::spawn(run_query(app, client, registry, sink, stream_id, dsl));
     Ok(())
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn cancel_stream(state: State<'_, AppState>, stream_id: String) -> AppResult<()> {
-    state.sessions.streams().cancel(&stream_id);
+    let streams = state.sessions.streams();
+    streams.cancel(&stream_id);
+    // 사용자가 명시적으로 취소한 결과는 export 대상이 아니므로 즉시 폐기한다.
+    streams.drop_stream(&stream_id);
     Ok(())
+}
+
+// --- Phase 6: Export / Count (`docs/03-ipc-contract.md` §4·§5 v0.5) ---
+
+#[derive(Deserialize)]
+pub struct ExportResultParams {
+    pub stream_id: String,
+    pub format: ExportFormat,
+    pub path: PathBuf,
+    #[serde(default)]
+    pub source: Option<ExportSource>,
+}
+
+#[derive(Serialize)]
+pub struct ExportResultResponse {
+    pub written_bytes: u64,
+    pub path: PathBuf,
+    pub row_count: usize,
+}
+
+/// 활성 스트림의 디스크 sink에서 결과를 읽어 지정 포맷으로 파일에 쓴다.
+/// sink가 없으면(=다른 쿼리가 시작되었거나 세션이 해제됨) `internal` 에러.
+#[tauri::command(rename_all = "snake_case")]
+pub fn export_result(
+    state: State<'_, AppState>,
+    params: ExportResultParams,
+) -> AppResult<ExportResultResponse> {
+    let streams = state.sessions.streams();
+    let sink = streams.sink(&params.stream_id).ok_or_else(|| {
+        AppError::Internal {
+            message: format!("no result sink for stream {}", params.stream_id),
+        }
+    })?;
+    let source = params.source.unwrap_or_default();
+    let stats = {
+        let guard = sink.lock();
+        match params.format {
+            ExportFormat::Json => guard.write_json(&params.path, source),
+            ExportFormat::Ndjson => guard.write_ndjson(&params.path, source),
+            ExportFormat::Csv => guard.write_csv(&params.path, source),
+        }
+        .map_err(|e| AppError::Io {
+            message: format!("failed to write export file: {e}"),
+        })?
+    };
+    tracing::info!(
+        target: "query",
+        stream_id = %params.stream_id,
+        format = ?params.format,
+        source = ?source,
+        row_count = stats.row_count,
+        written_bytes = stats.written_bytes,
+        op = "export_result",
+        "exported query result"
+    );
+    Ok(ExportResultResponse {
+        written_bytes: stats.written_bytes,
+        path: params.path,
+        row_count: stats.row_count,
+    })
+}
+
+#[derive(Serialize)]
+pub struct QueryCountResponse {
+    pub matched: u64,
+    pub scanned: u64,
+}
+
+/// DSL을 실행해 post_filter 통과 건수와 스캔 건수를 반환한다.
+/// Firestore aggregation API는 백로그 — 현재는 스트리밍 카운트.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn query_count(
+    state: State<'_, AppState>,
+    dsl: QueryDsl,
+) -> AppResult<QueryCountResponse> {
+    let client = state.sessions.firestore()?;
+    validate(&dsl)?;
+    let params = translate(&dsl)?;
+    let matcher = dsl
+        .post_filter
+        .as_ref()
+        .map(post_filter::compile)
+        .transpose()?;
+
+    let mut stream = client
+        .db
+        .stream_query_doc_with_errors(params)
+        .await
+        .map_err(|_| AppError::Firestore {
+            message: "failed to start count query stream".into(),
+        })?;
+
+    let mut matched: u64 = 0;
+    let mut scanned: u64 = 0;
+    while let Some(item) = stream.next().await {
+        let item = item.map_err(|_| AppError::Firestore {
+            message: "error while counting query results".into(),
+        })?;
+        scanned += 1;
+        if let Some(m) = matcher.as_ref() {
+            let doc = decode_document(&item);
+            if m.matches(&doc.data) {
+                matched += 1;
+            }
+        } else {
+            matched += 1;
+        }
+    }
+    Ok(QueryCountResponse { matched, scanned })
 }
 
 // --- 쿼리 히스토리 (`docs/03-ipc-contract.md` §8) ---

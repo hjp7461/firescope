@@ -15,19 +15,29 @@ use uuid::Uuid;
 use crate::adapters::TauriTokenSink;
 use crate::auth::{AuthHandle, EmulatorAuth, IdTokenAuth, ServiceAccountAuth};
 use crate::error::{AppError, AppResult};
-use crate::firestore::FirestoreClient;
+use crate::firestore::{FirestoreClient, ResultSink};
 use crate::profile::store::ProfileManager;
 use crate::profile::{Credential, Profile, ProfileMode};
 use crate::query::history::QueryHistoryManager;
 
-/// 진행 중인 쿼리 스트림 추적기 (`stream_id` → 취소 플래그).
+/// 진행 중인 쿼리 스트림 추적기. 각 stream_id에 대해
+/// 1) 협조적 취소 플래그 (`AtomicBool`),
+/// 2) 결과 누적 sink (`ResultSink`, 임시 NDJSON) — `export_result` IPC에서 소비,
 ///
-/// 의존성 추가 없이 `AtomicBool`로 협조적 취소를 구현한다. 스트리밍
-/// 태스크가 청크 사이마다 `is_cancelled`를 확인한다.
+/// 를 묶어 보관한다.
+///
+/// sink는 finished/cancel/sessions deactivate 시 즉시 drop되어 임시 파일이
+/// unlink된다 (원칙 5 Secret Lifetime — 운영 데이터를 디스크에 잔존시키지 않음).
 #[derive(Default)]
 pub struct StreamRegistry {
-    flags:
-        parking_lot::Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>>,
+    inner: parking_lot::Mutex<std::collections::HashMap<String, StreamEntry>>,
+}
+
+struct StreamEntry {
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
+    /// `query_documents` 시작 시 생성, 종료/취소 시 drop. `take_sink`로
+    /// 외부에서 빼낼 수도 있으나 통상은 등록자가 보관한다.
+    sink: Option<Arc<parking_lot::Mutex<ResultSink>>>,
 }
 
 impl StreamRegistry {
@@ -35,40 +45,84 @@ impl StreamRegistry {
         Self::default()
     }
 
-    /// 스트림 등록 후 취소 플래그 핸들 반환.
-    pub fn register(&self, stream_id: &str) -> Arc<std::sync::atomic::AtomicBool> {
+    /// 스트림 등록 후 (취소 플래그, sink 핸들) 반환.
+    /// sink 생성에 실패하면 (예: 임시 디렉터리 쓰기 권한 없음) sink 없이 진행.
+    pub fn register(
+        &self,
+        stream_id: &str,
+    ) -> (
+        Arc<std::sync::atomic::AtomicBool>,
+        Option<Arc<parking_lot::Mutex<ResultSink>>>,
+    ) {
         let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        self.flags
-            .lock()
-            .insert(stream_id.to_string(), Arc::clone(&flag));
-        flag
+        let sink = match ResultSink::new() {
+            Ok(s) => Some(Arc::new(parking_lot::Mutex::new(s))),
+            Err(e) => {
+                tracing::warn!(
+                    target: "query",
+                    error = %e,
+                    stream_id = %stream_id,
+                    "failed to create result sink; export_result will be unavailable"
+                );
+                None
+            }
+        };
+        let entry = StreamEntry {
+            cancelled: Arc::clone(&flag),
+            sink: sink.as_ref().map(Arc::clone),
+        };
+        self.inner.lock().insert(stream_id.to_string(), entry);
+        (flag, sink)
     }
 
     /// 취소되었거나 등록되지 않은(=정리됨) 스트림이면 true.
     pub fn is_cancelled(&self, stream_id: &str) -> bool {
-        self.flags
+        self.inner
             .lock()
             .get(stream_id)
-            .map(|f| f.load(std::sync::atomic::Ordering::Relaxed))
+            .map(|e| e.cancelled.load(std::sync::atomic::Ordering::Relaxed))
             .unwrap_or(true)
     }
 
     pub fn cancel(&self, stream_id: &str) {
-        if let Some(f) = self.flags.lock().get(stream_id) {
-            f.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(e) = self.inner.lock().get(stream_id) {
+            e.cancelled
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
-    /// 스트림 완료 — 레지스트리에서 제거.
+    /// 스트림 완료 — 취소 플래그만 제거. sink는 별도로 export 가능하도록
+    /// 등록 유지(다음 쿼리가 시작되면 그때 교체된다).
     pub fn finish(&self, stream_id: &str) {
-        self.flags.lock().remove(stream_id);
+        if let Some(e) = self.inner.lock().get_mut(stream_id) {
+            e.cancelled
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 
-    /// 활성 세션 해제/전환 시 진행 중 모든 스트림 일괄 취소.
+    /// `export_result` 등에서 사용할 sink 핸들 조회.
+    pub fn sink(&self, stream_id: &str) -> Option<Arc<parking_lot::Mutex<ResultSink>>> {
+        self.inner
+            .lock()
+            .get(stream_id)
+            .and_then(|e| e.sink.as_ref().map(Arc::clone))
+    }
+
+    /// 활성 세션 해제/전환 시 진행 중 모든 스트림 취소 + sink 폐기.
     pub fn cancel_all(&self) {
-        for f in self.flags.lock().values() {
-            f.store(true, std::sync::atomic::Ordering::Relaxed);
+        let mut guard = self.inner.lock();
+        for entry in guard.values() {
+            entry
+                .cancelled
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
+        // sink Arc drop → 마지막 참조 해제 시 임시 파일 unlink.
+        guard.clear();
+    }
+
+    /// 단일 스트림 등록 해제 + sink 폐기 (사용자가 결과 폐기를 명시할 때).
+    pub fn drop_stream(&self, stream_id: &str) {
+        self.inner.lock().remove(stream_id);
     }
 }
 
