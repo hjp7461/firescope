@@ -77,6 +77,48 @@ impl<R: Runtime> ProfileManager<R> {
         self.vault.get(id)
     }
 
+    /// export 용 전체 스냅샷. 자격증명 본문은 애초에 Profile에 없다.
+    pub fn list_full(&self) -> Vec<Profile> {
+        self.cache.read().values().cloned().collect()
+    }
+
+    /// 자격증명 등록/갱신. **저장 전 형식 검증**(본문 미노출) 후 Vault에만
+    /// 본문을 저장하고, 메타에는 `credential_ref`(키 문자열)만 남긴다.
+    pub fn set_credential(&self, id: Uuid, cred: Credential) -> AppResult<()> {
+        crate::profile::validation::validate(&cred)?;
+        let account = {
+            let cache = self.cache.read();
+            let profile = cache
+                .get(&id)
+                .ok_or_else(|| AppError::profile_not_found(format!("no profile with id {id}")))?;
+            profile.credential_account()
+        };
+        self.vault.set(id, &cred)?;
+        if let Some(profile) = self.cache.write().get_mut(&id) {
+            profile.credential_ref = Some(account);
+        }
+        self.persist()
+    }
+
+    /// 자격증명만 제거 (프로파일 메타는 유지).
+    pub fn clear_credential(&self, id: Uuid) -> AppResult<()> {
+        if !self.cache.read().contains_key(&id) {
+            return Err(AppError::profile_not_found(format!(
+                "no profile with id {id}"
+            )));
+        }
+        self.vault.remove(id)?;
+        if let Some(profile) = self.cache.write().get_mut(&id) {
+            profile.credential_ref = None;
+        }
+        self.persist()
+    }
+
+    /// Vault에 자격증명이 존재하는지 (test/메타 표시용).
+    pub fn has_credential(&self, id: Uuid) -> bool {
+        self.vault.has(id)
+    }
+
     // ── 변경 ────────────────────────────────────────────────────────────
 
     pub fn create(&self, params: CreateProfileParams) -> AppResult<ProfileMeta> {

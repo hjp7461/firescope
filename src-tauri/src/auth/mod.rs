@@ -43,4 +43,14 @@ pub trait AuthHandle: Send + Sync {
     fn expires_at(&self) -> Option<DateTime<Utc>>;
 
     fn mode(&self) -> ProfileMode;
+
+    /// 토큰 강제 갱신 후 새 만료 시각 반환.
+    ///
+    /// 기본 구현은 갱신할 토큰이 없는 모드(emulator/id_token)용으로,
+    /// 현재 만료 시각을 그대로 돌려준다(무동작). 서비스 계정은 실제
+    /// 재발급하도록 오버라이드한다.
+    fn force_refresh(&self) -> BoxFuture<'_, AppResult<Option<DateTime<Utc>>>> {
+        let current = self.expires_at();
+        Box::pin(async move { Ok(current) })
+    }
 }

@@ -61,7 +61,7 @@ struct ActiveSession {
     profile: Profile,
     #[allow(dead_code)] // Phase 2: 쿼리 시 이 설정으로 FirestoreDb 생성
     firestore: FirestoreClient,
-    auth: Box<dyn AuthHandle>,
+    auth: Arc<dyn AuthHandle>,
     activated_at: DateTime<Utc>,
 }
 
@@ -178,6 +178,22 @@ impl SessionManager {
         Ok(())
     }
 
+    /// 활성 세션의 토큰을 강제 갱신하고 `(profile_id, 새 만료시각)`을 반환.
+    /// 잠금을 await 너머로 들고 가지 않도록 핸들만 꺼낸 뒤 갱신한다.
+    pub async fn refresh_token(&self) -> AppResult<(Uuid, DateTime<Utc>)> {
+        let handle = {
+            let guard = self.active.read();
+            guard.as_ref().map(|s| (s.profile.id, Arc::clone(&s.auth)))
+        };
+        let (profile_id, auth) = handle.ok_or_else(|| AppError::NoSession {
+            message: "no active session to refresh".into(),
+        })?;
+        let expires_at = auth.force_refresh().await?.ok_or_else(|| AppError::Auth {
+            message: "active session has no refreshable token".into(),
+        })?;
+        Ok((profile_id, expires_at))
+    }
+
     /// 모드별 인증 핸들 생성. 자격증명 본문은 여기서 Vault → AuthHandle로만
     /// 흐르고 로그/에러/IPC로 새지 않는다.
     async fn build_auth<R: Runtime>(
@@ -185,9 +201,9 @@ impl SessionManager {
         app: &tauri::AppHandle<R>,
         profiles: &ProfileManager<R>,
         profile: &Profile,
-    ) -> AppResult<Box<dyn AuthHandle>> {
+    ) -> AppResult<Arc<dyn AuthHandle>> {
         match profile.mode {
-            ProfileMode::Emulator => Ok(Box::new(EmulatorAuth)),
+            ProfileMode::Emulator => Ok(Arc::new(EmulatorAuth)),
 
             ProfileMode::ServiceAccount => {
                 let cred = profiles.credential(profile.id)?.ok_or_else(|| {
@@ -198,7 +214,7 @@ impl SessionManager {
                 match cred {
                     Credential::ServiceAccount { json } => {
                         let auth = ServiceAccountAuth::new(&json, app.clone(), profile.id).await?;
-                        Ok(Box::new(auth))
+                        Ok(Arc::new(auth))
                     }
                     Credential::IdToken { .. } => Err(AppError::credential_invalid(
                         "stored credential kind does not match profile mode (service_account)",
@@ -211,7 +227,7 @@ impl SessionManager {
                     AppError::credential_not_found("id_token profile has no stored credential")
                 })?;
                 match cred {
-                    Credential::IdToken { token } => Ok(Box::new(IdTokenAuth::new(token))),
+                    Credential::IdToken { token } => Ok(Arc::new(IdTokenAuth::new(token))),
                     Credential::ServiceAccount { .. } => Err(AppError::credential_invalid(
                         "stored credential kind does not match profile mode (id_token)",
                     )),

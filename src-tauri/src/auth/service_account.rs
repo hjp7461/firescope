@@ -45,6 +45,7 @@ struct TokenExpired {
 }
 
 pub struct ServiceAccountAuth {
+    provider: Arc<CustomServiceAccount>,
     cache: Arc<RwLock<CachedToken>>,
     refresh_task: JoinHandle<()>,
 }
@@ -79,6 +80,7 @@ impl ServiceAccountAuth {
         ));
 
         Ok(Self {
+            provider,
             cache,
             refresh_task,
         })
@@ -182,5 +184,18 @@ impl AuthHandle for ServiceAccountAuth {
 
     fn mode(&self) -> ProfileMode {
         ProfileMode::ServiceAccount
+    }
+
+    /// 즉시 재발급하여 캐시를 교체하고 새 만료 시각을 반환한다.
+    /// 백그라운드 루프는 다음 주기에 새 `expires_at`을 읽어 자동 보정된다.
+    fn force_refresh(&self) -> BoxFuture<'_, AppResult<Option<DateTime<Utc>>>> {
+        let provider = Arc::clone(&self.provider);
+        let cache = Arc::clone(&self.cache);
+        Box::pin(async move {
+            let fresh = Self::fetch(&provider).await?;
+            let expires_at = fresh.expires_at;
+            *cache.write() = fresh;
+            Ok(Some(expires_at))
+        })
     }
 }

@@ -1,4 +1,5 @@
 mod auth;
+mod commands;
 mod error;
 mod firestore;
 mod profile;
@@ -9,12 +10,6 @@ use tauri_plugin_store::StoreExt;
 
 use crate::profile::{CredentialVault, ProfileManager};
 use crate::state::AppState;
-
-// Phase 0 IPC 동작 확인용. Phase 1-D에서 프로파일 커맨드로 대체된다.
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -28,7 +23,23 @@ pub fn run() {
             app.manage(AppState::new(profiles));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet])
+        .invoke_handler(tauri::generate_handler![
+            commands::profile::list_profiles,
+            commands::profile::get_profile,
+            commands::profile::create_profile,
+            commands::profile::update_profile,
+            commands::profile::delete_profile,
+            commands::profile::duplicate_profile,
+            commands::profile::set_credential,
+            commands::profile::clear_credential,
+            commands::profile::test_profile,
+            commands::profile::export_profiles,
+            commands::profile::import_profiles,
+            commands::session::activate_profile,
+            commands::session::current_session,
+            commands::session::deactivate,
+            commands::session::refresh_token,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
