@@ -1,3 +1,4 @@
+import { SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ModeIcon } from "@/components/profile/mode";
 import { useResultStore } from "@/stores/resultStore";
@@ -7,9 +8,13 @@ import type { ProfileMode } from "@/types";
 export function ResultBar({
   projectId,
   mode,
+  builderOpen,
+  onToggleBuilder,
 }: {
   projectId: string;
   mode: ProfileMode;
+  builderOpen: boolean;
+  onToggleBuilder: () => void;
 }) {
   const path = useResultStore((s) => s.collectionPath);
   const status = useResultStore((s) => s.status);
@@ -21,6 +26,18 @@ export function ResultBar({
 
   return (
     <div className="flex items-center gap-3 border-b px-3 py-1.5 text-xs">
+      <Button
+        type="button"
+        size="sm"
+        variant={builderOpen ? "secondary" : "ghost"}
+        className="h-7 gap-1.5 px-2 text-xs"
+        aria-pressed={builderOpen}
+        onClick={onToggleBuilder}
+      >
+        <SlidersHorizontal className="size-3.5" />
+        쿼리 빌더
+      </Button>
+      <span className="h-4 w-px bg-border" />
       <ViewTabs />
       <span className="h-4 w-px bg-border" />
       <ModeIcon mode={mode} className="size-4 text-muted-foreground" />

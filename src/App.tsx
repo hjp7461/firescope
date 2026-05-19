@@ -15,6 +15,7 @@ import { TreeView } from "@/components/views/TreeView";
 import { JsonView } from "@/components/views/JsonView";
 import { LogView } from "@/components/views/LogView";
 import { ResultBar } from "@/components/views/ResultBar";
+import { QueryBuilder } from "@/components/query-builder/QueryBuilder";
 import { useViewStore } from "@/stores/viewStore";
 import { startLogStream } from "@/stores/logStore";
 
@@ -37,6 +38,7 @@ function App() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<ProfileMeta | null>(null);
   const [pendingProd, setPendingProd] = useState<ProfileMeta | null>(null);
+  const [builderOpen, setBuilderOpen] = useState(true);
 
   // 진입: 프로파일 목록 + 기존 세션 복구 + 로그 스트림 시작.
   useEffect(() => {
@@ -145,7 +147,10 @@ function App() {
               <ResultBar
                 projectId={session.project_id}
                 mode={session.mode}
+                builderOpen={builderOpen}
+                onToggleBuilder={() => setBuilderOpen((v) => !v)}
               />
+              {builderOpen && <QueryBuilder />}
               <div className="min-w-0 flex-1 overflow-hidden">
                 <ResultPane />
               </div>
