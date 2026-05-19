@@ -5,8 +5,10 @@
 //! - `translate`  : DSL → firestore `FirestoreQueryParams` (다음 증분)
 
 pub mod dsl;
+pub mod translate;
 pub mod validate;
 
 #[allow(unused_imports)]
 pub use dsl::QueryDsl;
+pub use translate::translate;
 pub use validate::validate;
