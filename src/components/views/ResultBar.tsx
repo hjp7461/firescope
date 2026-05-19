@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { ModeIcon } from "@/components/profile/mode";
 import { useResultStore } from "@/stores/resultStore";
+import { ViewTabs } from "./ViewTabs";
 import type { ProfileMode } from "@/types";
 
 export function ResultBar({
@@ -20,6 +21,8 @@ export function ResultBar({
 
   return (
     <div className="flex items-center gap-3 border-b px-3 py-1.5 text-xs">
+      <ViewTabs />
+      <span className="h-4 w-px bg-border" />
       <ModeIcon mode={mode} className="size-4 text-muted-foreground" />
       <span className="text-muted-foreground">{projectId}</span>
       {path && (

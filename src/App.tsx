@@ -11,7 +11,19 @@ import { activateProfile, currentSession } from "@/ipc/session";
 import { asAppError, type ProfileMeta, type Session } from "@/types";
 import { CollectionsPanel } from "@/components/views/CollectionsPanel";
 import { TableView } from "@/components/views/TableView";
+import { TreeView } from "@/components/views/TreeView";
+import { JsonView } from "@/components/views/JsonView";
+import { LogView } from "@/components/views/LogView";
 import { ResultBar } from "@/components/views/ResultBar";
+import { useViewStore } from "@/stores/viewStore";
+
+function ResultPane() {
+  const view = useViewStore((s) => s.activeView);
+  if (view === "tree") return <TreeView />;
+  if (view === "json") return <JsonView />;
+  if (view === "log") return <LogView />;
+  return <TableView />;
+}
 
 function App() {
   const loadProfiles = useProfileStore((s) => s.load);
@@ -133,7 +145,7 @@ function App() {
                 mode={session.mode}
               />
               <div className="min-w-0 flex-1 overflow-hidden">
-                <TableView />
+                <ResultPane />
               </div>
             </div>
           </div>
