@@ -16,6 +16,7 @@ import { JsonView } from "@/components/views/JsonView";
 import { LogView } from "@/components/views/LogView";
 import { ResultBar } from "@/components/views/ResultBar";
 import { useViewStore } from "@/stores/viewStore";
+import { startLogStream } from "@/stores/logStore";
 
 function ResultPane() {
   const view = useViewStore((s) => s.activeView);
@@ -37,12 +38,13 @@ function App() {
   const [editing, setEditing] = useState<ProfileMeta | null>(null);
   const [pendingProd, setPendingProd] = useState<ProfileMeta | null>(null);
 
-  // 진입: 프로파일 목록 + 기존 세션 복구.
+  // 진입: 프로파일 목록 + 기존 세션 복구 + 로그 스트림 시작.
   useEffect(() => {
     loadProfiles();
     currentSession()
       .then(setCurrent)
       .catch(() => setCurrent(null));
+    void startLogStream();
   }, [loadProfiles, setCurrent]);
 
   // 백엔드 이벤트 구독 (원칙 10: 상태는 이벤트로 자동 동기화).
