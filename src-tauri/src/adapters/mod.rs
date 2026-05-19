@@ -7,6 +7,8 @@
 pub mod event_sink;
 pub mod log_layer;
 pub mod profile_repo;
+pub mod query_history_repo;
 
 pub use event_sink::TauriTokenSink;
 pub use profile_repo::TauriProfileRepository;
+pub use query_history_repo::TauriQueryHistoryRepository;

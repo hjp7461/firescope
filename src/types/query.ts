@@ -47,12 +47,47 @@ export type WhereClause = {
 
 export type OrderBy = { field: string; direction: "asc" | "desc" };
 
+export type Cursor =
+  | { kind: "document_ref"; path: string }
+  | { kind: "values"; values: FirestoreValue[] };
+
+export type RegexFilter = {
+  fields: string[];
+  pattern: string;
+  case_insensitive?: boolean;
+};
+
+export type ContainsFilter = {
+  fields: string[];
+  text: string;
+  case_insensitive?: boolean;
+};
+
+export type PostFilter = {
+  regex?: RegexFilter;
+  contains?: ContainsFilter;
+  jsonpath?: string;
+};
+
+// `src-tauri/src/query/dsl.rs::QueryDsl`와 동기화 (`docs/04-query-dsl.md`).
 export type QueryDsl = {
   target: QueryTarget;
   where?: WhereClause[];
   order_by?: OrderBy[];
   limit?: number;
+  start_after?: Cursor;
+  end_before?: Cursor;
   select?: string[];
+  post_filter?: PostFilter;
+};
+
+// 쿼리 히스토리 (`docs/03-ipc-contract.md` §8).
+export type QueryHistoryEntry = {
+  id: string;
+  dsl: QueryDsl;
+  executed_at: string;
+  took_ms?: number;
+  result_count?: number;
 };
 
 // query_documents 이벤트 페이로드 (`query:chunk|done|error:<stream_id>`).

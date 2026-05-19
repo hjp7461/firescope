@@ -6,16 +6,24 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { listCollections } from "@/ipc/query";
 import { useResultStore } from "@/stores/resultStore";
+import { useQueryStore } from "@/stores/queryStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { asAppError } from "@/types";
 
-// 활성 세션의 루트 컬렉션 목록. 클릭 → 해당 컬렉션 첫 100건 쿼리.
+// 활성 세션의 루트 컬렉션 목록. 클릭 → 빌더 드래프트를 해당 컬렉션으로
+// 맞추고 첫 100건 쿼리. (빌더가 열려 있으면 그대로 다듬어 재실행 가능)
 export function CollectionsPanel() {
   const sessionId = useSessionStore((s) => s.current?.session_id ?? null);
   const [collections, setCollections] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const activePath = useResultStore((s) => s.collectionPath);
   const runQuery = useResultStore((s) => s.runCollectionQuery);
+  const loadFromTarget = useQueryStore((s) => s.loadFromTarget);
+
+  function onPick(c: string) {
+    loadFromTarget("collection", c);
+    void runQuery(c);
+  }
 
   async function load() {
     setLoading(true);
@@ -59,7 +67,7 @@ export function CollectionsPanel() {
               <li key={c}>
                 <button
                   type="button"
-                  onClick={() => runQuery(c)}
+                  onClick={() => onPick(c)}
                   className={cn(
                     "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
                     activePath === c

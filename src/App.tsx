@@ -15,7 +15,9 @@ import { TreeView } from "@/components/views/TreeView";
 import { JsonView } from "@/components/views/JsonView";
 import { LogView } from "@/components/views/LogView";
 import { ResultBar } from "@/components/views/ResultBar";
+import { QueryBuilder } from "@/components/query-builder/QueryBuilder";
 import { useViewStore } from "@/stores/viewStore";
+import { useHistoryStore } from "@/stores/historyStore";
 import { startLogStream } from "@/stores/logStore";
 
 function ResultPane() {
@@ -37,6 +39,7 @@ function App() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<ProfileMeta | null>(null);
   const [pendingProd, setPendingProd] = useState<ProfileMeta | null>(null);
+  const [builderOpen, setBuilderOpen] = useState(true);
 
   // 진입: 프로파일 목록 + 기존 세션 복구 + 로그 스트림 시작.
   useEffect(() => {
@@ -46,6 +49,11 @@ function App() {
       .catch(() => setCurrent(null));
     void startLogStream();
   }, [loadProfiles, setCurrent]);
+
+  // 활성 프로파일이 바뀌면 그 프로파일의 쿼리 히스토리를 로드 (격리).
+  useEffect(() => {
+    void useHistoryStore.getState().load(session?.profile_id ?? null);
+  }, [session?.profile_id]);
 
   // 백엔드 이벤트 구독 (원칙 10: 상태는 이벤트로 자동 동기화).
   useEffect(() => {
@@ -145,7 +153,10 @@ function App() {
               <ResultBar
                 projectId={session.project_id}
                 mode={session.mode}
+                builderOpen={builderOpen}
+                onToggleBuilder={() => setBuilderOpen((v) => !v)}
               />
+              {builderOpen && <QueryBuilder />}
               <div className="min-w-0 flex-1 overflow-hidden">
                 <ResultPane />
               </div>

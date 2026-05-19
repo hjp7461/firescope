@@ -1,19 +1,23 @@
-//! 컬렉션/문서/쿼리 커맨드 (`docs/03-ipc-contract.md` §3·§4).
+//! 컬렉션/문서/쿼리/히스토리 커맨드 (`docs/03-ipc-contract.md` §3·§4·§8).
 //!
-//! 모두 활성 세션의 라이브 `FirestoreClient`를 사용한다. 세션이 없으면
-//! `SessionManager::firestore()`가 `no_session` 에러를 반환한다.
+//! 조회 계열은 활성 세션의 라이브 `FirestoreClient`를 사용한다. 세션이
+//! 없으면 `SessionManager::firestore()`가 `no_session` 에러를 반환한다.
+//! 히스토리 계열은 세션과 무관하게 프로파일별 로컬 데이터를 다룬다.
 
 use std::sync::Arc;
 
 use firestore::{
     FirestoreGetByIdSupport, FirestoreListCollectionIdsParams, FirestoreListingSupport,
 };
+use serde::Deserialize;
 use tauri::{AppHandle, State};
+use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 use crate::firestore::streaming::run_query;
 use crate::firestore::{decode_document, Document};
 use crate::query::dsl::QueryDsl;
+use crate::query::history::HistoryEntry;
 use crate::state::AppState;
 
 #[tauri::command(rename_all = "snake_case")]
@@ -101,4 +105,55 @@ pub async fn query_documents(
 pub fn cancel_stream(state: State<'_, AppState>, stream_id: String) -> AppResult<()> {
     state.sessions.streams().cancel(&stream_id);
     Ok(())
+}
+
+// --- 쿼리 히스토리 (`docs/03-ipc-contract.md` §8) ---
+// 세션과 무관한 프로파일별 로컬 데이터. 자격증명/결과는 보관하지 않는다.
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn list_query_history(
+    state: State<'_, AppState>,
+    profile_id: Uuid,
+) -> AppResult<Vec<HistoryEntry>> {
+    Ok(state.history.list(profile_id))
+}
+
+#[derive(Deserialize)]
+pub struct AddQueryHistoryParams {
+    pub profile_id: Uuid,
+    pub dsl: QueryDsl,
+    #[serde(default)]
+    pub took_ms: Option<u64>,
+    #[serde(default)]
+    pub result_count: Option<u64>,
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn add_query_history(
+    state: State<'_, AppState>,
+    params: AddQueryHistoryParams,
+) -> AppResult<HistoryEntry> {
+    state.history.add(
+        params.profile_id,
+        params.dsl,
+        params.took_ms,
+        params.result_count,
+    )
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn remove_query_history(
+    state: State<'_, AppState>,
+    profile_id: Uuid,
+    entry_id: Uuid,
+) -> AppResult<()> {
+    state.history.remove(profile_id, entry_id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn clear_query_history(
+    state: State<'_, AppState>,
+    profile_id: Uuid,
+) -> AppResult<()> {
+    state.history.clear(profile_id)
 }

@@ -18,6 +18,7 @@ use crate::error::{AppError, AppResult};
 use crate::firestore::FirestoreClient;
 use crate::profile::store::ProfileManager;
 use crate::profile::{Credential, Profile, ProfileMode};
+use crate::query::history::QueryHistoryManager;
 
 /// 진행 중인 쿼리 스트림 추적기 (`stream_id` → 취소 플래그).
 ///
@@ -291,13 +292,15 @@ impl Default for SessionManager {
 pub struct AppState {
     pub profiles: ProfileManager,
     pub sessions: SessionManager,
+    pub history: QueryHistoryManager,
 }
 
 impl AppState {
-    pub fn new(profiles: ProfileManager) -> Self {
+    pub fn new(profiles: ProfileManager, history: QueryHistoryManager) -> Self {
         Self {
             profiles,
             sessions: SessionManager::new(),
+            history,
         }
     }
 }
