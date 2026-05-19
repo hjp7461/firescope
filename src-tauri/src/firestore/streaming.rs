@@ -50,6 +50,17 @@ pub async fn run_query<R: Runtime>(
         validate(&dsl)?;
         let params = translate(&dsl)?;
 
+        let collection_path = match &dsl.target {
+            crate::query::dsl::QueryTarget::Collection { path } => path.as_str(),
+            crate::query::dsl::QueryTarget::CollectionGroup { id } => id.as_str(),
+        };
+        tracing::info!(
+            collection = %collection_path,
+            stream_id = %stream_id,
+            op = "query_start",
+            "query started"
+        );
+
         let mut stream = client
             .db
             .stream_query_doc_with_errors(params)
@@ -101,12 +112,20 @@ pub async fn run_query<R: Runtime>(
 
     match outcome {
         Ok((total, cancelled)) => {
-            tracing::info!(target: "query", %stream_id, total, cancelled, "query stream finished");
+            let took_ms = started.elapsed().as_millis() as u64;
+            tracing::info!(
+                target: "query",
+                count = total,
+                took_ms,
+                stream_id = %stream_id,
+                op = "query_done",
+                "query finished"
+            );
             let _ = app.emit(
                 &done_ev,
                 DonePayload {
                     total,
-                    took_ms: started.elapsed().as_millis() as u64,
+                    took_ms,
                     has_more: cancelled,
                 },
             );

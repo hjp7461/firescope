@@ -5,6 +5,7 @@
 //! 허용된다.
 
 pub mod event_sink;
+pub mod log_layer;
 pub mod profile_repo;
 
 pub use event_sink::TauriTokenSink;

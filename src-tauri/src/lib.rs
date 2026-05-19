@@ -11,7 +11,11 @@ use std::sync::Arc;
 
 use tauri::Manager;
 use tauri_plugin_store::StoreExt;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
 
+use crate::adapters::log_layer::LogLayer;
 use crate::adapters::TauriProfileRepository;
 use crate::profile::{OsKeyringVault, ProfileManager};
 use crate::state::AppState;
@@ -22,6 +26,18 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
+            // tracing 구독자 초기화 (원칙 11: tracing only, 원칙 3: 패닉 금지).
+            let filter = EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info,firescope_lib=debug"));
+            if tracing_subscriber::registry()
+                .with(filter)
+                .with(LogLayer::new(app.handle().clone()))
+                .try_init()
+                .is_err()
+            {
+                // 이미 초기화됐거나 실패 — 패닉 금지(원칙 3), 앱은 계속.
+            }
+
             // 어댑터 합성 (원칙 13: AppState가 단일 진입점).
             let store = app.store("profiles.json")?;
             let repo = Arc::new(TauriProfileRepository::new(store));
