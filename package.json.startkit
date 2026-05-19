@@ -1,0 +1,47 @@
+{
+  "name": "firescope",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "emulator:up": "docker compose -f docker/docker-compose.yml up -d",
+    "emulator:down": "docker compose -f docker/docker-compose.yml down",
+    "emulator:logs": "docker compose -f docker/docker-compose.yml logs -f"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-store": "^2",
+    "@tauri-apps/plugin-fs": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-log": "^2",
+    "@tauri-apps/plugin-clipboard-manager": "^2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^4.5.5",
+    "@tanstack/react-table": "^8.20.5",
+    "@tanstack/react-virtual": "^3.10.8",
+    "react-arborist": "^3.4.0",
+    "@uiw/react-json-view": "^2.0.0-alpha",
+    "@monaco-editor/react": "^4.6.0",
+    "lucide-react": "^0.451.0",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^2.5.4"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.2",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8",
+    "tailwindcss": "^3.4.13",
+    "postcss": "^8.4.47",
+    "autoprefixer": "^10.4.20"
+  }
+}

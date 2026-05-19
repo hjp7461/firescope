@@ -1,0 +1,20 @@
+services:
+  firebase-emulator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: firescope-emulator
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+    ports:
+      - "4000:4000"   # Emulator UI
+      - "8080:8080"   # Firestore
+      - "9099:9099"   # Auth
+      - "9150:9150"   # Hub
+    command: >
+      emulators:start
+      --only firestore,auth
+      --project demo-firescope
+      --import=./seed
+      --export-on-exit=./seed

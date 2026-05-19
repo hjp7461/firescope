@@ -1,0 +1,40 @@
+# --- Frontend ---
+node_modules/
+dist/
+.vite/
+*.log
+.env.local
+.env.*.local
+
+# --- Rust / Tauri ---
+src-tauri/target/
+src-tauri/Cargo.lock
+
+# --- Firebase / Secrets ---
+**/*service-account*.json
+**/*serviceAccount*.json
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# --- 프로파일 로컬 데이터 (사용자별, 절대 커밋 금지) ---
+**/profiles.json
+**/.firescope/
+
+# --- Emulator data ---
+docker/seed/*
+!docker/seed/.gitkeep
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Claude Code 로컬 ---
+.claude/local/

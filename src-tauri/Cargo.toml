@@ -1,0 +1,48 @@
+[package]
+name = "firescope"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "firescope_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.52.3", features = ["full"] }
+futures = "0.3.32"
+firestore = "0.44"
+gcp_auth = "0.12"
+jsonwebtoken = "9"
+keyring = "3"
+secrecy = "0.10"
+zeroize = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+chrono = { version = "0.4.44", features = ["serde"] }
+thiserror = "2.0.18"
+anyhow = "1.0.102"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+uuid = { version = "1.23.1", features = ["v4", "serde"] }
+regex = "1.12.3"
+once_cell = "1.21.4"
+parking_lot = "0.12.5"
+tauri-plugin-store = "2.4.3"
+tauri-plugin-fs = "2.5.1"
+tauri-plugin-dialog = "2.7.1"
+tauri-plugin-log = "2.8.0"
+tauri-plugin-clipboard-manager = "2.3.2"
+
