@@ -8,7 +8,7 @@ import type { LogLevel } from "@/types";
 const LEVELS: LogLevel[] = ["error", "warn", "info", "debug"];
 const COLOR: Record<LogLevel, string> = {
   error: "text-destructive",
-  warn: "text-yellow-600",
+  warn: "text-amber-600",
   info: "text-foreground",
   debug: "text-muted-foreground",
 };
@@ -48,6 +48,7 @@ export function LogView() {
             key={l}
             type="button"
             onClick={() => toggleLevel(l)}
+            aria-pressed={levels.includes(l)}
             className={cn(
               "rounded px-1.5 py-0.5 font-medium",
               levels.includes(l) ? "bg-accent" : "text-muted-foreground/50",
