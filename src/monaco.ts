@@ -7,19 +7,19 @@
  * 반드시 Editor 컴포넌트보다 먼저 import되어야 한다 (side-effect import).
  */
 
-import * as monaco from "monaco-editor";
+import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
+import "monaco-editor/esm/vs/language/json/monaco.contribution";
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
 import { loader } from "@monaco-editor/react";
 
-// MonacoEnvironment는 monaco-editor의 editor.api.d.ts에서 Window 인터페이스에
-// 선언되어 있다. 브라우저 메인 스레드에서는 self === window이므로 캐스팅.
-(self as unknown as { MonacoEnvironment: monaco.Environment }).MonacoEnvironment =
-  {
-    getWorker(_: unknown, label: string): Worker {
-      return label === "json" ? new jsonWorker() : new editorWorker();
-    },
-  };
+// monaco-editor/esm/vs/editor/editor.api.d.ts가 Window 인터페이스에
+// MonacoEnvironment를 전역 선언하므로 직접 할당 가능.
+window.MonacoEnvironment = {
+  getWorker(_: unknown, label: string): Worker {
+    return label === "json" ? new jsonWorker() : new editorWorker();
+  },
+};
 
 // @monaco-editor/react 가 CDN 대신 로컬 monaco 인스턴스를 사용하도록 설정.
 loader.config({ monaco });
