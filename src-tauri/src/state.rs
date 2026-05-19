@@ -19,13 +19,14 @@ use crate::firestore::FirestoreClient;
 use crate::profile::store::ProfileManager;
 use crate::profile::{Credential, Profile, ProfileMode};
 
-/// 진행 중인 쿼리 스트림 추적기.
+/// 진행 중인 쿼리 스트림 추적기 (`stream_id` → 취소 플래그).
 ///
-/// Phase 2에서 `stream_id → CancellationToken` 맵으로 채워진다. 지금은
-/// 세션 해제 흐름의 호출 지점만 확정한다 (`cancel_all`은 아직 no-op).
+/// 의존성 추가 없이 `AtomicBool`로 협조적 취소를 구현한다. 스트리밍
+/// 태스크가 청크 사이마다 `is_cancelled`를 확인한다.
 #[derive(Default)]
 pub struct StreamRegistry {
-    _private: (),
+    flags:
+        parking_lot::Mutex<std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 impl StreamRegistry {
@@ -33,8 +34,41 @@ impl StreamRegistry {
         Self::default()
     }
 
-    /// 활성 세션 해제/전환 시 진행 중 모든 스트림을 취소. (Phase 2에서 구현)
-    pub fn cancel_all(&self) {}
+    /// 스트림 등록 후 취소 플래그 핸들 반환.
+    pub fn register(&self, stream_id: &str) -> Arc<std::sync::atomic::AtomicBool> {
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.flags
+            .lock()
+            .insert(stream_id.to_string(), Arc::clone(&flag));
+        flag
+    }
+
+    /// 취소되었거나 등록되지 않은(=정리됨) 스트림이면 true.
+    pub fn is_cancelled(&self, stream_id: &str) -> bool {
+        self.flags
+            .lock()
+            .get(stream_id)
+            .map(|f| f.load(std::sync::atomic::Ordering::Relaxed))
+            .unwrap_or(true)
+    }
+
+    pub fn cancel(&self, stream_id: &str) {
+        if let Some(f) = self.flags.lock().get(stream_id) {
+            f.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// 스트림 완료 — 레지스트리에서 제거.
+    pub fn finish(&self, stream_id: &str) {
+        self.flags.lock().remove(stream_id);
+    }
+
+    /// 활성 세션 해제/전환 시 진행 중 모든 스트림 일괄 취소.
+    pub fn cancel_all(&self) {
+        for f in self.flags.lock().values() {
+            f.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
 }
 
 /// IPC `Session` (`docs/03-ipc-contract.md`). 자격증명 본문은 포함되지 않는다.

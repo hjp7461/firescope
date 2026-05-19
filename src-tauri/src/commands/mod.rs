@@ -4,4 +4,5 @@
 //! 응답·로그·에러 어디에도 포함하지 않는다.
 
 pub mod profile;
+pub mod query;
 pub mod session;

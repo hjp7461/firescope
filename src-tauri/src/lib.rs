@@ -46,6 +46,11 @@ pub fn run() {
             commands::session::current_session,
             commands::session::deactivate,
             commands::session::refresh_token,
+            commands::query::list_collections,
+            commands::query::list_subcollections,
+            commands::query::get_document,
+            commands::query::query_documents,
+            commands::query::cancel_stream,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

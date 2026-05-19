@@ -1,10 +1,12 @@
-//! Firestore 연결 계층.
+//! Firestore 연결/데이터플레인 계층.
 //!
-//! 1-C 범위: 프로파일 모드별 **연결 설정 해석**과 세션 보관.
-//! 실제 gRPC `FirestoreDb` 핸들 생성과 쿼리/스트리밍은 Phase 2
-//! (`docs/06-roadmap.md` Phase 2, `streaming.rs`)에서 이 설정을 입력으로
-//! 구성한다 — 1-C에서는 데이터플레인 RPC를 발생시키지 않는다.
+//! Phase 2부터 활성화 시점에 라이브 `FirestoreDb`를 생성하고
+//! (`connection`), protobuf 결과를 DSL로 디코드(`decode`)하며,
+//! 페이지네이션 스트리밍(`streaming`)으로 결과를 이벤트 전송한다.
 
 pub mod connection;
+pub mod decode;
+pub mod streaming;
 
 pub use connection::{probe, FirestoreClient};
+pub use decode::{decode_document, Document};
