@@ -6,7 +6,9 @@
 
 pub mod connection;
 pub mod decode;
+pub mod result_sink;
 pub mod streaming;
 
 pub use connection::{probe, FirestoreClient};
 pub use decode::{decode_document, Document};
+pub use result_sink::{ExportFormat, ExportSource, ResultSink};

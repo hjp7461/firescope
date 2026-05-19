@@ -8,12 +8,15 @@ use std::collections::BTreeMap;
 use chrono::DateTime;
 use gcloud_sdk::google::firestore::v1::{value::ValueType, Document as PbDoc, Value as PbValue};
 use gcloud_sdk::prost_types::Timestamp;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::query::dsl::FirestoreValue;
 
 /// IPC 응답 문서 (`docs/03-ipc-contract.md` `Document`).
-#[derive(Debug, Clone, Serialize)]
+///
+/// `Deserialize`는 `ResultSink`가 NDJSON 임시 파일에서 다시 읽어들이기 위해
+/// 필요하다 (IPC 방향에는 영향 없음).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Document {
     pub path: String,
     pub id: String,

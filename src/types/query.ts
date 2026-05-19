@@ -81,6 +81,21 @@ export type QueryDsl = {
   post_filter?: PostFilter;
 };
 
+// Export / Count (`docs/03-ipc-contract.md` §4·§5 v0.5).
+export type ExportFormat = "json" | "ndjson" | "csv";
+export type ExportSource = "matched" | "scanned";
+
+export type ExportResultResponse = {
+  written_bytes: number;
+  path: string;
+  row_count: number;
+};
+
+export type QueryCountResponse = {
+  matched: number;
+  scanned: number;
+};
+
 // 쿼리 히스토리 (`docs/03-ipc-contract.md` §8).
 export type QueryHistoryEntry = {
   id: string;

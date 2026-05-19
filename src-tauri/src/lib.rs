@@ -26,6 +26,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             // tracing 구독자 초기화 (원칙 11: tracing only, 원칙 3: 패닉 금지).
             let filter = EnvFilter::try_from_default_env()
@@ -73,6 +75,8 @@ pub fn run() {
             commands::query::get_document,
             commands::query::query_documents,
             commands::query::cancel_stream,
+            commands::query::export_result,
+            commands::query::query_count,
             commands::query::list_query_history,
             commands::query::add_query_history,
             commands::query::remove_query_history,
