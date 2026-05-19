@@ -117,7 +117,7 @@ function App() {
         onDelete={onDelete}
       />
 
-      <main className="flex flex-1 flex-col">
+      <main className="flex min-w-0 flex-1 flex-col">
         {activeProfile?.read_only_warning && (
           <div className="bg-destructive px-4 py-1.5 text-center text-xs font-medium text-white">
             운영 환경에 연결되어 있습니다 · 읽기 전용
@@ -125,14 +125,14 @@ function App() {
         )}
 
         {session ? (
-          <div className="flex flex-1 overflow-hidden">
+          <div className="flex min-w-0 flex-1 overflow-hidden">
             <CollectionsPanel />
-            <div className="flex flex-1 flex-col overflow-hidden">
+            <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
               <ResultBar
                 projectId={session.project_id}
                 mode={session.mode}
               />
-              <div className="flex-1 overflow-hidden">
+              <div className="min-w-0 flex-1 overflow-hidden">
                 <TableView />
               </div>
             </div>

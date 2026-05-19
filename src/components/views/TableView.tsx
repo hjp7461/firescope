@@ -83,7 +83,9 @@ export function TableView() {
 
   return (
     <div ref={parentRef} className="h-full overflow-auto">
-      <div style={{ width: totalWidth, position: "relative" }}>
+      {/* minWidth:100% → 컬럼 합이 좁아도 그리드가 패널 폭을 채움.
+          넓으면 width=totalWidth가 가로 스크롤을 만든다. */}
+      <div style={{ width: totalWidth, minWidth: "100%", position: "relative" }}>
         {/* 헤더 (sticky) — 컬럼 경계 드래그로 폭 조정 */}
         <div className="sticky top-0 z-10 flex border-b bg-background">
           {table.getFlatHeaders().map((h) => (
@@ -105,6 +107,8 @@ export function TableView() {
               />
             </div>
           ))}
+          {/* 남는 폭 흡수용 필러 (상호작용 없음) */}
+          <div className="flex-1" aria-hidden />
         </div>
 
         {/* 가상화 바디 */}
@@ -119,11 +123,10 @@ export function TableView() {
             return (
               <div
                 key={r.id}
-                className="absolute flex border-b hover:bg-accent/40"
+                className="absolute inset-x-0 flex border-b hover:bg-accent/40"
                 style={{
                   top: 0,
                   height: ROW_HEIGHT,
-                  width: totalWidth,
                   transform: `translateY(${vr.start}px)`,
                 }}
               >
@@ -139,6 +142,7 @@ export function TableView() {
                     )}
                   </div>
                 ))}
+                <div className="flex-1" aria-hidden />
               </div>
             );
           })}
