@@ -17,6 +17,7 @@ import { LogView } from "@/components/views/LogView";
 import { ResultBar } from "@/components/views/ResultBar";
 import { QueryBuilder } from "@/components/query-builder/QueryBuilder";
 import { useViewStore } from "@/stores/viewStore";
+import { useHistoryStore } from "@/stores/historyStore";
 import { startLogStream } from "@/stores/logStore";
 
 function ResultPane() {
@@ -48,6 +49,11 @@ function App() {
       .catch(() => setCurrent(null));
     void startLogStream();
   }, [loadProfiles, setCurrent]);
+
+  // 활성 프로파일이 바뀌면 그 프로파일의 쿼리 히스토리를 로드 (격리).
+  useEffect(() => {
+    void useHistoryStore.getState().load(session?.profile_id ?? null);
+  }, [session?.profile_id]);
 
   // 백엔드 이벤트 구독 (원칙 10: 상태는 이벤트로 자동 동기화).
   useEffect(() => {

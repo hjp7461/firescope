@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Play, Plus, RotateCcw, Code2 } from "lucide-react";
+import { Play, Plus, RotateCcw, Code2, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -17,6 +17,9 @@ import { useResultStore } from "@/stores/resultStore";
 import { WhereRow } from "./WhereRow";
 import { OrderByRow } from "./OrderByRow";
 import { DslPreview } from "./DslPreview";
+import { HistoryPanel } from "./HistoryPanel";
+
+type SidePanel = "none" | "dsl" | "history";
 
 function SectionHeader({
   title,
@@ -49,7 +52,10 @@ export function QueryBuilder() {
   const build = useQueryStore((st) => st.build);
   const runDsl = useResultStore((st) => st.runDsl);
   const [error, setError] = useState<string | null>(null);
-  const [showPreview, setShowPreview] = useState(false);
+  const [side, setSide] = useState<SidePanel>("none");
+
+  const toggleSide = (panel: Exclude<SidePanel, "none">) =>
+    setSide((cur) => (cur === panel ? "none" : panel));
 
   async function onRun() {
     const r = build();
@@ -106,10 +112,21 @@ export function QueryBuilder() {
         <Button
           type="button"
           size="sm"
-          variant={showPreview ? "secondary" : "ghost"}
+          variant={side === "history" ? "secondary" : "ghost"}
           className="h-7 gap-1 px-2 text-xs"
-          aria-pressed={showPreview}
-          onClick={() => setShowPreview((v) => !v)}
+          aria-pressed={side === "history"}
+          onClick={() => toggleSide("history")}
+        >
+          <Clock className="size-3.5" />
+          히스토리
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant={side === "dsl" ? "secondary" : "ghost"}
+          className="h-7 gap-1 px-2 text-xs"
+          aria-pressed={side === "dsl"}
+          onClick={() => toggleSide("dsl")}
         >
           <Code2 className="size-3.5" />
           DSL
@@ -187,9 +204,9 @@ export function QueryBuilder() {
           </div>
         </ScrollArea>
 
-        {showPreview && (
+        {side !== "none" && (
           <div className="min-h-0 w-[40%] overflow-hidden rounded-md border bg-background">
-            <DslPreview />
+            {side === "dsl" ? <DslPreview /> : <HistoryPanel />}
           </div>
         )}
       </div>
