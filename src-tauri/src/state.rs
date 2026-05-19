@@ -60,7 +60,6 @@ struct DeactivatedPayload {
 struct ActiveSession {
     session_id: Uuid,
     profile: Profile,
-    #[allow(dead_code)] // Phase 2: 쿼리 시 이 설정으로 FirestoreDb 생성
     firestore: FirestoreClient,
     auth: Arc<dyn AuthHandle>,
     activated_at: DateTime<Utc>,
@@ -127,10 +126,11 @@ impl SessionManager {
             });
         }
 
-        // 1) 인증 핸들 구성 — 기존 세션을 건드리기 전에 (실패 시 롤백 불필요).
-        let auth = self.build_auth(app, profiles, &profile).await?;
-        // 2) 연결 설정 해석 (라이브 FirestoreDb는 Phase 2).
-        let firestore = FirestoreClient::connect(&profile)?;
+        // 1) 자격증명 1회 조회 → 인증 핸들 + 라이브 FirestoreDb 구성.
+        //    기존 세션을 건드리기 전에 끝낸다 (실패 시 롤백 불필요).
+        let credential = profiles.credential(profile_id)?;
+        let auth = self.build_auth(app, &profile, credential.as_ref()).await?;
+        let firestore = FirestoreClient::connect(&profile, credential.as_ref()).await?;
 
         // 3) 기존 세션 해제 (스트림 취소 + 이벤트). prev drop 시 토큰 태스크 정리.
         let previous = self.active.write().take();
@@ -195,46 +195,54 @@ impl SessionManager {
         Ok((profile_id, expires_at))
     }
 
+    /// 활성 세션의 라이브 Firestore 클라이언트 (clone은 값쌈 — 내부 Arc).
+    /// 잠금을 await 너머로 들고 가지 않도록 clone해서 반환한다.
+    pub fn firestore(&self) -> AppResult<FirestoreClient> {
+        self.active
+            .read()
+            .as_ref()
+            .map(|s| s.firestore.clone())
+            .ok_or_else(|| AppError::NoSession {
+                message: "no active session".into(),
+            })
+    }
+
     /// 모드별 인증 핸들 생성. 자격증명 본문은 여기서 Vault → AuthHandle로만
     /// 흐르고 로그/에러/IPC로 새지 않는다.
     async fn build_auth<R: Runtime>(
         &self,
         app: &tauri::AppHandle<R>,
-        profiles: &ProfileManager,
         profile: &Profile,
+        credential: Option<&Credential>,
     ) -> AppResult<Arc<dyn AuthHandle>> {
         match profile.mode {
             ProfileMode::Emulator => Ok(Arc::new(EmulatorAuth)),
 
-            ProfileMode::ServiceAccount => {
-                let cred = profiles.credential(profile.id)?.ok_or_else(|| {
-                    AppError::credential_not_found(
-                        "service account profile has no stored credential",
-                    )
-                })?;
-                match cred {
-                    Credential::ServiceAccount { json } => {
-                        let sink = Arc::new(TauriTokenSink::new(app.clone()));
-                        let auth = ServiceAccountAuth::new(&json, sink, profile.id).await?;
-                        Ok(Arc::new(auth))
-                    }
-                    Credential::IdToken { .. } => Err(AppError::credential_invalid(
-                        "stored credential kind does not match profile mode (service_account)",
-                    )),
+            ProfileMode::ServiceAccount => match credential {
+                Some(Credential::ServiceAccount { json }) => {
+                    let sink = Arc::new(TauriTokenSink::new(app.clone()));
+                    let auth = ServiceAccountAuth::new(json, sink, profile.id).await?;
+                    Ok(Arc::new(auth))
                 }
-            }
+                Some(Credential::IdToken { .. }) => Err(AppError::credential_invalid(
+                    "stored credential kind does not match profile mode (service_account)",
+                )),
+                None => Err(AppError::credential_not_found(
+                    "service account profile has no stored credential",
+                )),
+            },
 
-            ProfileMode::IdToken => {
-                let cred = profiles.credential(profile.id)?.ok_or_else(|| {
-                    AppError::credential_not_found("id_token profile has no stored credential")
-                })?;
-                match cred {
-                    Credential::IdToken { token } => Ok(Arc::new(IdTokenAuth::new(token))),
-                    Credential::ServiceAccount { .. } => Err(AppError::credential_invalid(
-                        "stored credential kind does not match profile mode (id_token)",
-                    )),
+            ProfileMode::IdToken => match credential {
+                Some(Credential::IdToken { token }) => {
+                    Ok(Arc::new(IdTokenAuth::new(token.clone())))
                 }
-            }
+                Some(Credential::ServiceAccount { .. }) => Err(AppError::credential_invalid(
+                    "stored credential kind does not match profile mode (id_token)",
+                )),
+                None => Err(AppError::credential_not_found(
+                    "id_token profile has no stored credential",
+                )),
+            },
         }
     }
 }
