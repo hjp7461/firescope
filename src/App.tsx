@@ -9,7 +9,9 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { deleteProfile, duplicateProfile } from "@/ipc/profile";
 import { activateProfile, currentSession } from "@/ipc/session";
 import { asAppError, type ProfileMeta, type Session } from "@/types";
-import { ModeIcon } from "@/components/profile/mode";
+import { CollectionsPanel } from "@/components/views/CollectionsPanel";
+import { TableView } from "@/components/views/TableView";
+import { ResultBar } from "@/components/views/ResultBar";
 
 function App() {
   const loadProfiles = useProfileStore((s) => s.load);
@@ -122,28 +124,26 @@ function App() {
           </div>
         )}
 
-        <div className="flex flex-1 items-center justify-center p-8">
-          {session ? (
-            <div className="text-center">
-              <div className="mb-2 flex items-center justify-center gap-2">
-                <ModeIcon mode={session.mode} className="size-5" />
-                <span className="text-lg font-semibold">
-                  {session.profile_name}
-                </span>
+        {session ? (
+          <div className="flex flex-1 overflow-hidden">
+            <CollectionsPanel />
+            <div className="flex flex-1 flex-col overflow-hidden">
+              <ResultBar
+                projectId={session.project_id}
+                mode={session.mode}
+              />
+              <div className="flex-1 overflow-hidden">
+                <TableView />
               </div>
-              <p className="text-sm text-muted-foreground">
-                {session.project_id}
-              </p>
-              <p className="mt-4 text-xs text-muted-foreground">
-                세션 활성 · 컬렉션 조회는 Phase 2에서 제공됩니다.
-              </p>
             </div>
-          ) : (
+          </div>
+        ) : (
+          <div className="flex flex-1 items-center justify-center p-8">
             <p className="text-sm text-muted-foreground">
               왼쪽에서 프로파일을 더블클릭해 활성화하세요.
             </p>
-          )}
-        </div>
+          </div>
+        )}
       </main>
 
       <ProfileFormDialog
