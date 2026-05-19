@@ -90,6 +90,15 @@ impl CompareOp {
             CompareOp::Ne | CompareOp::NotIn | CompareOp::ArrayContainsAny
         )
     }
+
+    /// `value`가 배열이어야 하는 멤버십 연산자인가 (`in`/`not_in`/
+    /// `array_contains_any`). 그 외는 단일 값만 허용한다.
+    pub fn takes_array_value(self) -> bool {
+        matches!(
+            self,
+            CompareOp::In | CompareOp::NotIn | CompareOp::ArrayContainsAny
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

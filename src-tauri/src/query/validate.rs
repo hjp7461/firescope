@@ -4,10 +4,12 @@
 //! Firestore 네이티브 제약을 *사전* 검증해 무의미한 RPC를 막는다.
 
 use crate::error::{AppError, AppResult};
-use crate::query::dsl::{CompareOp, QueryDsl, QueryTarget};
+use crate::query::dsl::{QueryDsl, QueryTarget, WhereValue};
 
 const MAX_WHERE: usize = 30;
 const MAX_LIMIT: u32 = 1000;
+/// Firestore disjunction 제한 (`in`/`not_in`/`array_contains_any` 값 개수).
+const MAX_DISJUNCTION: usize = 30;
 
 fn invalid(msg: impl Into<String>) -> AppError {
     AppError::InvalidQuery {
@@ -69,6 +71,33 @@ pub fn validate(dsl: &QueryDsl) -> AppResult<()> {
         }
     }
 
+    // 8) 연산자별 값 arity
+    for wc in &dsl.r#where {
+        match (&wc.value, wc.op.takes_array_value()) {
+            (WhereValue::Many(items), true) => {
+                if items.is_empty() || items.len() > MAX_DISJUNCTION {
+                    return Err(invalid(format!(
+                        "'{:?}' value must be an array of 1..={MAX_DISJUNCTION} elements",
+                        wc.op
+                    )));
+                }
+            }
+            (WhereValue::One(_), false) => {}
+            (_, true) => {
+                return Err(invalid(format!(
+                    "'{:?}' requires an array value",
+                    wc.op
+                )));
+            }
+            (_, false) => {
+                return Err(invalid(format!(
+                    "'{:?}' requires a single value, not an array",
+                    wc.op
+                )));
+            }
+        }
+    }
+
     // 5) limit 범위 1..=1000
     if let Some(limit) = dsl.limit {
         if limit == 0 || limit > MAX_LIMIT {
@@ -119,6 +148,78 @@ mod tests {
             field: field.into(),
             op,
             value: WhereValue::One(FirestoreValue::Bool { value: true }),
+        }
+    }
+
+    fn wv(field: &str, op: CompareOp, value: WhereValue) -> WhereClause {
+        WhereClause {
+            field: field.into(),
+            op,
+            value,
+        }
+    }
+
+    fn ints(n: usize) -> WhereValue {
+        WhereValue::Many(
+            (0..n)
+                .map(|i| FirestoreValue::Int {
+                    value: i.to_string(),
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn in_requires_array_value() {
+        let mut q = base();
+        q.r#where = vec![w("role", CompareOp::In)]; // One(bool) → 거부
+        assert!(validate(&q).is_err());
+    }
+
+    #[test]
+    fn in_rejects_empty_array() {
+        let mut q = base();
+        q.r#where = vec![wv("role", CompareOp::In, ints(0))];
+        assert!(validate(&q).is_err());
+    }
+
+    #[test]
+    fn in_rejects_over_30_values() {
+        let mut q = base();
+        q.r#where = vec![wv("role", CompareOp::In, ints(31))];
+        assert!(validate(&q).is_err());
+    }
+
+    #[test]
+    fn in_accepts_valid_array() {
+        let mut q = base();
+        q.r#where = vec![wv("role", CompareOp::In, ints(3))];
+        assert!(validate(&q).is_ok());
+    }
+
+    #[test]
+    fn array_contains_any_and_not_in_require_array() {
+        let mut q = base();
+        q.r#where = vec![w("tags", CompareOp::ArrayContainsAny)];
+        assert!(validate(&q).is_err());
+        q.r#where = vec![w("role", CompareOp::NotIn)];
+        assert!(validate(&q).is_err());
+    }
+
+    #[test]
+    fn scalar_operators_reject_array_value() {
+        for op in [
+            CompareOp::Eq,
+            CompareOp::Ne,
+            CompareOp::Lt,
+            CompareOp::Le,
+            CompareOp::Gt,
+            CompareOp::Ge,
+            CompareOp::ArrayContains,
+        ] {
+            let mut q = base();
+            q.r#where = vec![wv("f", op, ints(2))];
+            assert!(validate(&q).is_err(), "{op:?} should reject array value");
         }
     }
 
