@@ -2,7 +2,11 @@
 
 import { call } from "./index";
 import type {
+  ExportFormat,
+  ExportResultResponse,
+  ExportSource,
   FirestoreDocument,
+  QueryCountResponse,
   QueryDsl,
   QueryHistoryEntry,
 } from "@/types";
@@ -22,6 +26,18 @@ export const queryDocuments = (streamId: string, dsl: QueryDsl) =>
 
 export const cancelStream = (streamId: string) =>
   call<void>("cancel_stream", { stream_id: streamId });
+
+// --- Export / Count (`docs/03-ipc-contract.md` §4·§5 v0.5) ---
+
+export const exportResult = (params: {
+  stream_id: string;
+  format: ExportFormat;
+  path: string;
+  source?: ExportSource;
+}) => call<ExportResultResponse>("export_result", { params });
+
+export const queryCount = (dsl: QueryDsl) =>
+  call<QueryCountResponse>("query_count", { dsl });
 
 // --- 쿼리 히스토리 (`docs/03-ipc-contract.md` §8) ---
 

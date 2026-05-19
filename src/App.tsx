@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { ProfileSidebar } from "@/components/profile/ProfileSidebar";
@@ -19,6 +19,11 @@ import { QueryBuilder } from "@/components/query-builder/QueryBuilder";
 import { useViewStore } from "@/stores/viewStore";
 import { useHistoryStore } from "@/stores/historyStore";
 import { startLogStream } from "@/stores/logStore";
+import { initTheme } from "@/stores/themeStore";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { useResultStore } from "@/stores/resultStore";
+import { useQueryStore } from "@/stores/queryStore";
+import { bindGlobalHotkeys } from "@/lib/hotkeys";
 
 function ResultPane() {
   const view = useViewStore((s) => s.activeView);
@@ -41,19 +46,49 @@ function App() {
   const [pendingProd, setPendingProd] = useState<ProfileMeta | null>(null);
   const [builderOpen, setBuilderOpen] = useState(true);
 
-  // 진입: 프로파일 목록 + 기존 세션 복구 + 로그 스트림 시작.
+  // 진입: 프로파일 목록 + 기존 세션 복구 + 로그 스트림 시작 + 테마 적용.
   useEffect(() => {
     loadProfiles();
     currentSession()
       .then(setCurrent)
       .catch(() => setCurrent(null));
     void startLogStream();
+    return initTheme();
   }, [loadProfiles, setCurrent]);
 
   // 활성 프로파일이 바뀌면 그 프로파일의 쿼리 히스토리를 로드 (격리).
   useEffect(() => {
     void useHistoryStore.getState().load(session?.profile_id ?? null);
   }, [session?.profile_id]);
+
+  // 글로벌 단축키 (Phase 6-F). 콜백을 ref로 받아 매번 새 클로저를 캡처하면서도
+  // keydown 리스너는 한 번만 bind한다 (마운트/언마운트 비용 절감).
+  const onSelectProfileRef = useRef<(idx: number) => void>(() => {});
+  onSelectProfileRef.current = (idx: number) => {
+    const list = useProfileStore.getState().profiles;
+    const p = list[idx];
+    if (!p) return;
+    if (p.require_confirmation) setPendingProd(p);
+    else void doActivate(p, false);
+  };
+  useEffect(() => {
+    return bindGlobalHotkeys({
+      onRun: () => {
+        const result = useQueryStore.getState().build();
+        if (!result.ok) {
+          toast.error(result.error);
+          return;
+        }
+        void useResultStore.getState().runDsl(result.dsl);
+      },
+      onCancel: () => {
+        if (useResultStore.getState().status === "streaming") {
+          void useResultStore.getState().cancel();
+        }
+      },
+      onSelectProfile: (idx) => onSelectProfileRef.current(idx),
+    });
+  }, []);
 
   // 백엔드 이벤트 구독 (원칙 10: 상태는 이벤트로 자동 동기화).
   useEffect(() => {
@@ -145,6 +180,9 @@ function App() {
             운영 환경에 연결되어 있습니다 · 읽기 전용
           </div>
         )}
+        <div className="absolute right-2 top-1 z-10">
+          <ThemeToggle className="size-7 p-0" />
+        </div>
 
         {session ? (
           <div className="flex min-w-0 flex-1 overflow-hidden">
