@@ -1,18 +1,27 @@
-//! Tauri 관리 상태 (`app.manage`).
+//! Tauri 관리 상태 (`app.manage`)와 세션 수명주기.
 //!
-//! Phase 1-A 범위에서는 [`ProfileManager`]만 완전 구현된다.
-//! [`SessionManager`]/[`StreamRegistry`]는 Phase 1-C / Phase 2에서
-//! 채워질 골격이다 — 지금은 타입과 보관 위치만 확정한다.
+//! 동시 활성 세션은 **항상 1개**다 (`docs/07-profiles.md` 다중 세션 기본
+//! 정책). 프로파일 전환 시 기존 세션을 먼저 해제하고 진행 중 스트림을
+//! 모두 취소한 뒤 새 세션을 활성화한다.
 
+use std::sync::Arc;
+
+use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
-use tauri::Runtime;
+use serde::Serialize;
+use tauri::{Emitter, Runtime};
+use uuid::Uuid;
 
+use crate::auth::{AuthHandle, EmulatorAuth, IdTokenAuth, ServiceAccountAuth};
+use crate::error::{AppError, AppResult};
+use crate::firestore::FirestoreClient;
 use crate::profile::store::ProfileManager;
+use crate::profile::{Credential, Profile, ProfileMode};
 
 /// 진행 중인 쿼리 스트림 추적기.
 ///
-/// Phase 2에서 `stream_id → CancellationToken` 맵으로 채워진다.
-/// 프로파일 전환 시 모든 스트림을 일괄 취소하는 책임을 갖는다.
+/// Phase 2에서 `stream_id → CancellationToken` 맵으로 채워진다. 지금은
+/// 세션 해제 흐름의 호출 지점만 확정한다 (`cancel_all`은 아직 no-op).
 #[derive(Default)]
 pub struct StreamRegistry {
     _private: (),
@@ -22,25 +31,199 @@ impl StreamRegistry {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// 활성 세션 해제/전환 시 진행 중 모든 스트림을 취소. (Phase 2에서 구현)
+    pub fn cancel_all(&self) {}
 }
 
-/// 활성 세션 1개를 보관. Phase 1-C에서 activate/deactivate가 구현된다.
-///
-/// `ActiveSession`(FirestoreClient + AuthHandle)은 인증/연결 계층
-/// (Phase 1-B/1-C)이 도입된 뒤 정의되므로, 지금은 빈 슬롯만 둔다.
-#[derive(Default)]
+/// IPC `Session` (`docs/03-ipc-contract.md`). 자격증명 본문은 포함되지 않는다.
+#[derive(Debug, Clone, Serialize)]
+pub struct Session {
+    pub session_id: Uuid,
+    pub profile_id: Uuid,
+    pub profile_name: String,
+    pub project_id: String,
+    pub mode: ProfileMode,
+    pub activated_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Serialize, Clone)]
+struct DeactivatedPayload {
+    profile_id: Uuid,
+}
+
+/// 활성 세션 1개의 런타임 묶음. `Drop`되면 `ServiceAccountAuth`의 토큰
+/// 갱신 태스크도 함께 정리된다 (그쪽 `Drop`이 abort).
+struct ActiveSession {
+    session_id: Uuid,
+    profile: Profile,
+    #[allow(dead_code)] // Phase 2: 쿼리 시 이 설정으로 FirestoreDb 생성
+    firestore: FirestoreClient,
+    auth: Box<dyn AuthHandle>,
+    activated_at: DateTime<Utc>,
+}
+
+impl ActiveSession {
+    fn to_dto(&self) -> Session {
+        Session {
+            session_id: self.session_id,
+            profile_id: self.profile.id,
+            profile_name: self.profile.name.clone(),
+            project_id: self.profile.project_id.clone(),
+            mode: self.profile.mode,
+            activated_at: self.activated_at,
+            expires_at: self.auth.expires_at(),
+        }
+    }
+}
+
 pub struct SessionManager {
-    active: RwLock<Option<()>>,
+    active: RwLock<Option<ActiveSession>>,
+    streams: Arc<StreamRegistry>,
 }
 
 impl SessionManager {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            active: RwLock::new(None),
+            streams: Arc::new(StreamRegistry::new()),
+        }
     }
 
-    /// 활성 세션 존재 여부 (Phase 1-C 전까지는 항상 false).
+    pub fn streams(&self) -> &Arc<StreamRegistry> {
+        &self.streams
+    }
+
+    pub fn current(&self) -> Option<Session> {
+        self.active.read().as_ref().map(ActiveSession::to_dto)
+    }
+
     pub fn is_active(&self) -> bool {
         self.active.read().is_some()
+    }
+
+    /// 프로파일을 활성화하여 세션을 시작한다.
+    ///
+    /// 순서가 중요하다: 인증 핸들 구성(서비스 계정은 실제 토큰 왕복)을
+    /// **기존 세션을 건드리기 전에** 끝낸다. 실패하면 기존 세션을 그대로
+    /// 둔 채 에러를 반환한다(원자성).
+    pub async fn activate<R: Runtime>(
+        &self,
+        app: &tauri::AppHandle<R>,
+        profiles: &ProfileManager<R>,
+        profile_id: Uuid,
+        confirmed: bool,
+    ) -> AppResult<Session> {
+        let profile = profiles.get_profile(profile_id).ok_or_else(|| {
+            AppError::profile_not_found(format!("no profile with id {profile_id}"))
+        })?;
+
+        if profile.require_confirmation && !confirmed {
+            return Err(AppError::ConfirmationRequired {
+                message: "this profile requires explicit confirmation to activate".into(),
+            });
+        }
+
+        // 1) 인증 핸들 구성 — 기존 세션을 건드리기 전에 (실패 시 롤백 불필요).
+        let auth = self.build_auth(app, profiles, &profile).await?;
+        // 2) 연결 설정 해석 (라이브 FirestoreDb는 Phase 2).
+        let firestore = FirestoreClient::connect(&profile)?;
+
+        // 3) 기존 세션 해제 (스트림 취소 + 이벤트). prev drop 시 토큰 태스크 정리.
+        let previous = self.active.write().take();
+        if let Some(prev) = previous {
+            self.streams.cancel_all();
+            let _ = app.emit(
+                "profile:deactivated",
+                DeactivatedPayload {
+                    profile_id: prev.profile.id,
+                },
+            );
+            drop(prev);
+        }
+
+        // 4) 새 세션 설치.
+        let session = ActiveSession {
+            session_id: Uuid::new_v4(),
+            profile,
+            firestore,
+            auth,
+            activated_at: Utc::now(),
+        };
+        let dto = session.to_dto();
+        *self.active.write() = Some(session);
+
+        tracing::info!(
+            target: "session",
+            profile_id = %profile_id,
+            session_id = %dto.session_id,
+            "profile activated"
+        );
+        let _ = app.emit("profile:activated", dto.clone());
+        Ok(dto)
+    }
+
+    /// 현재 세션 종료. 진행 중 스트림 취소. 활성 세션이 없어도 성공(idempotent).
+    pub fn deactivate<R: Runtime>(&self, app: &tauri::AppHandle<R>) -> AppResult<()> {
+        let previous = self.active.write().take();
+        if let Some(prev) = previous {
+            self.streams.cancel_all();
+            let profile_id = prev.profile.id;
+            drop(prev);
+            tracing::info!(target: "session", profile_id = %profile_id, "profile deactivated");
+            let _ = app.emit("profile:deactivated", DeactivatedPayload { profile_id });
+        }
+        Ok(())
+    }
+
+    /// 모드별 인증 핸들 생성. 자격증명 본문은 여기서 Vault → AuthHandle로만
+    /// 흐르고 로그/에러/IPC로 새지 않는다.
+    async fn build_auth<R: Runtime>(
+        &self,
+        app: &tauri::AppHandle<R>,
+        profiles: &ProfileManager<R>,
+        profile: &Profile,
+    ) -> AppResult<Box<dyn AuthHandle>> {
+        match profile.mode {
+            ProfileMode::Emulator => Ok(Box::new(EmulatorAuth)),
+
+            ProfileMode::ServiceAccount => {
+                let cred = profiles.credential(profile.id)?.ok_or_else(|| {
+                    AppError::credential_not_found(
+                        "service account profile has no stored credential",
+                    )
+                })?;
+                match cred {
+                    Credential::ServiceAccount { json } => {
+                        let auth = ServiceAccountAuth::new(&json, app.clone(), profile.id).await?;
+                        Ok(Box::new(auth))
+                    }
+                    Credential::IdToken { .. } => Err(AppError::credential_invalid(
+                        "stored credential kind does not match profile mode (service_account)",
+                    )),
+                }
+            }
+
+            ProfileMode::IdToken => {
+                let cred = profiles.credential(profile.id)?.ok_or_else(|| {
+                    AppError::credential_not_found("id_token profile has no stored credential")
+                })?;
+                match cred {
+                    Credential::IdToken { token } => Ok(Box::new(IdTokenAuth::new(token))),
+                    Credential::ServiceAccount { .. } => Err(AppError::credential_invalid(
+                        "stored credential kind does not match profile mode (id_token)",
+                    )),
+                }
+            }
+        }
+    }
+}
+
+impl Default for SessionManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -48,7 +231,6 @@ impl SessionManager {
 pub struct AppState<R: Runtime> {
     pub profiles: ProfileManager<R>,
     pub sessions: SessionManager,
-    pub streams: StreamRegistry,
 }
 
 impl<R: Runtime> AppState<R> {
@@ -56,7 +238,6 @@ impl<R: Runtime> AppState<R> {
         Self {
             profiles,
             sessions: SessionManager::new(),
-            streams: StreamRegistry::new(),
         }
     }
 }

@@ -15,7 +15,8 @@ use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 use crate::profile::model::{
-    CreateProfileParams, Profile, ProfileMeta, ProfileMode, ProfileStoreData, UpdateProfileParams,
+    CreateProfileParams, Credential, Profile, ProfileMeta, ProfileMode, ProfileStoreData,
+    UpdateProfileParams,
 };
 use crate::profile::vault::CredentialVault;
 
@@ -68,6 +69,12 @@ impl<R: Runtime> ProfileManager<R> {
     /// 내부 계층(세션 활성화 등)이 쓰는 전체 Profile. IPC로 내보내지 않는다.
     pub fn get_profile(&self, id: Uuid) -> Option<Profile> {
         self.cache.read().get(&id).cloned()
+    }
+
+    /// 세션 활성화 시 자격증명 조회. Vault를 캡슐화한 채로 내부 계층에만
+    /// 노출한다 — 반환된 `Credential`은 로그/IPC로 새지 않아야 한다.
+    pub fn credential(&self, id: Uuid) -> AppResult<Option<Credential>> {
+        self.vault.get(id)
     }
 
     // ── 변경 ────────────────────────────────────────────────────────────

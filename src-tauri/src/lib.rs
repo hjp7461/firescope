@@ -1,5 +1,6 @@
 mod auth;
 mod error;
+mod firestore;
 mod profile;
 mod state;
 
