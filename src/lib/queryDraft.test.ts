@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildDsl, isArrayOp, type QueryDraft } from "./queryDraft";
+import {
+  buildDsl,
+  EMPTY_POST_FILTER,
+  isArrayOp,
+  type QueryDraft,
+} from "./queryDraft";
 
 function draft(over: Partial<QueryDraft> = {}): QueryDraft {
   return {
@@ -8,6 +13,7 @@ function draft(over: Partial<QueryDraft> = {}): QueryDraft {
     wheres: [],
     orderBys: [],
     limit: 100,
+    postFilter: { ...EMPTY_POST_FILTER },
     ...over,
   };
 }
@@ -114,6 +120,101 @@ describe("buildDsl", () => {
     expect(r.dsl.order_by).toEqual([{ field: "created_at", direction: "desc" }]);
     expect(r.dsl.limit).toBeUndefined();
     expect(r.dsl.where).toBeUndefined();
+  });
+
+  it("후처리 미설정이면 post_filter 생략", () => {
+    const r = buildDsl(draft());
+    expect(r.ok && r.dsl.post_filter).toBeUndefined();
+  });
+
+  it("regex 후처리: 필드 쉼표 분리 + case_insensitive", () => {
+    const r = buildDsl(
+      draft({
+        postFilter: {
+          kind: "regex",
+          fields: "name, profile.city",
+          pattern: "iphone\\s?1[35]",
+          caseInsensitive: true,
+          jsonpath: "",
+        },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.dsl.post_filter).toEqual({
+      regex: {
+        fields: ["name", "profile.city"],
+        pattern: "iphone\\s?1[35]",
+        case_insensitive: true,
+      },
+    });
+  });
+
+  it("contains 후처리", () => {
+    const r = buildDsl(
+      draft({
+        postFilter: {
+          kind: "contains",
+          fields: "desc",
+          pattern: "sale",
+          caseInsensitive: false,
+          jsonpath: "",
+        },
+      }),
+    );
+    expect(r.ok && r.dsl.post_filter).toEqual({
+      contains: { fields: ["desc"], text: "sale", case_insensitive: false },
+    });
+  });
+
+  it("jsonpath만 단독 설정 가능", () => {
+    const r = buildDsl(
+      draft({
+        postFilter: {
+          kind: "regex",
+          fields: "",
+          pattern: "",
+          caseInsensitive: false,
+          jsonpath: "$.tags[?@ == 'urgent']",
+        },
+      }),
+    );
+    expect(r.ok && r.dsl.post_filter).toEqual({
+      jsonpath: "$.tags[?@ == 'urgent']",
+    });
+  });
+
+  it("패턴은 있는데 필드가 비면 에러", () => {
+    const r = buildDsl(
+      draft({
+        postFilter: {
+          kind: "regex",
+          fields: "  ",
+          pattern: "x",
+          caseInsensitive: false,
+          jsonpath: "",
+        },
+      }),
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it("regex + jsonpath 동시 (AND)", () => {
+    const r = buildDsl(
+      draft({
+        postFilter: {
+          kind: "regex",
+          fields: "name",
+          pattern: "iPhone",
+          caseInsensitive: false,
+          jsonpath: "$.tags[?@ == 'urgent']",
+        },
+      }),
+    );
+    expect(r.ok && r.dsl.post_filter).toEqual({
+      regex: { fields: ["name"], pattern: "iPhone", case_insensitive: false },
+      jsonpath: "$.tags[?@ == 'urgent']",
+    });
   });
 
   it("isArrayOp 판별", () => {

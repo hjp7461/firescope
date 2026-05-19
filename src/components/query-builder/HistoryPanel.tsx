@@ -18,6 +18,7 @@ function summarize(dsl: QueryDsl): string {
   if (dsl.where?.length) parts.push(`where ${dsl.where.length}`);
   if (dsl.order_by?.length) parts.push(`order ${dsl.order_by.length}`);
   if (dsl.limit) parts.push(`limit ${dsl.limit}`);
+  if (dsl.post_filter) parts.push("후처리");
   return parts.join(" · ") || "조건 없음";
 }
 

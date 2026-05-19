@@ -7,6 +7,7 @@
 
 pub mod dsl;
 pub mod history;
+pub mod post_filter;
 pub mod translate;
 pub mod validate;
 

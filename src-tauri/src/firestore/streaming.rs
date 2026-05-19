@@ -15,7 +15,7 @@ use tauri::{Emitter, Runtime};
 use crate::error::{AppError, AppResult};
 use crate::firestore::{decode_document, Document, FirestoreClient};
 use crate::query::dsl::QueryDsl;
-use crate::query::{translate, validate};
+use crate::query::{post_filter, translate, validate};
 use crate::state::StreamRegistry;
 
 const PAGE: usize = 100;
@@ -28,12 +28,16 @@ struct ChunkPayload {
 
 #[derive(Serialize, Clone)]
 struct DonePayload {
+    /// 후처리 통과(매칭) 문서 수 = chunk로 전달된 합계.
     total: usize,
+    /// Firestore에서 가져온 전체 문서 수 (post_filter 없으면 total과 동일).
+    scanned: usize,
     took_ms: u64,
     has_more: bool,
 }
 
-/// 검증 → 변환 → 스트리밍. 협조적 취소(레지스트리 플래그)를 청크 사이마다 확인.
+/// 검증 → 변환 → (후처리 컴파일) → 스트리밍. 협조적 취소(레지스트리
+/// 플래그)를 청크 사이마다 확인.
 pub async fn run_query<R: Runtime>(
     app: tauri::AppHandle<R>,
     client: FirestoreClient,
@@ -46,9 +50,15 @@ pub async fn run_query<R: Runtime>(
     let err_ev = format!("query:error:{stream_id}");
     let started = Instant::now();
 
-    let outcome: AppResult<(usize, bool)> = async {
+    let outcome: AppResult<(usize, usize, bool)> = async {
         validate(&dsl)?;
         let params = translate(&dsl)?;
+        // validate가 컴파일 가능성을 보장하므로 여기서는 실패하지 않는다.
+        let matcher = dsl
+            .post_filter
+            .as_ref()
+            .map(post_filter::compile)
+            .transpose()?;
 
         let collection_path = match &dsl.target {
             crate::query::dsl::QueryTarget::Collection { path } => path.as_str(),
@@ -71,7 +81,8 @@ pub async fn run_query<R: Runtime>(
 
         let mut buf: Vec<Document> = Vec::with_capacity(PAGE);
         let mut page: u32 = 0;
-        let mut total: usize = 0;
+        let mut matched: usize = 0;
+        let mut scanned: usize = 0;
         let mut cancelled = false;
 
         while let Some(item) = stream.next().await {
@@ -79,11 +90,17 @@ pub async fn run_query<R: Runtime>(
                 cancelled = true;
                 break;
             }
-            let doc = item.map_err(|_| AppError::Firestore {
+            let item = item.map_err(|_| AppError::Firestore {
                 message: "error while streaming query results".into(),
             })?;
-            buf.push(decode_document(&doc));
-            total += 1;
+            let doc = decode_document(&item);
+            scanned += 1;
+            // 후처리 통과 문서만 청크로 전달 (`docs/04-query-dsl.md`).
+            if matcher.as_ref().is_some_and(|m| !m.matches(&doc.data)) {
+                continue;
+            }
+            buf.push(doc);
+            matched += 1;
             if buf.len() >= PAGE {
                 let _ = app.emit(
                     &chunk_ev,
@@ -104,18 +121,19 @@ pub async fn run_query<R: Runtime>(
                 },
             );
         }
-        Ok((total, cancelled))
+        Ok((matched, scanned, cancelled))
     }
     .await;
 
     registry.finish(&stream_id);
 
     match outcome {
-        Ok((total, cancelled)) => {
+        Ok((matched, scanned, cancelled)) => {
             let took_ms = started.elapsed().as_millis() as u64;
             tracing::info!(
                 target: "query",
-                count = total,
+                count = matched,
+                scanned,
                 took_ms,
                 stream_id = %stream_id,
                 op = "query_done",
@@ -124,7 +142,8 @@ pub async fn run_query<R: Runtime>(
             let _ = app.emit(
                 &done_ev,
                 DonePayload {
-                    total,
+                    total: matched,
+                    scanned,
                     took_ms,
                     has_more: cancelled,
                 },

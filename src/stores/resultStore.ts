@@ -21,6 +21,7 @@ type ResultState = {
   rows: FirestoreDocument[];
   status: Status;
   total: number;
+  scanned: number;
   tookMs: number | null;
   error: string | null;
   runCollectionQuery: (path: string) => Promise<void>;
@@ -52,6 +53,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
   rows: [],
   status: "idle",
   total: 0,
+  scanned: 0,
   tookMs: null,
   error: null,
 
@@ -64,6 +66,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
       rows: [],
       status: "idle",
       total: 0,
+      scanned: 0,
       tookMs: null,
       error: null,
     });
@@ -79,6 +82,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
       rows: [],
       status: "streaming",
       total: 0,
+      scanned: 0,
       tookMs: null,
       error: null,
     });
@@ -94,6 +98,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
         set({
           status: "done",
           total: e.payload.total,
+          scanned: e.payload.scanned,
           tookMs: e.payload.took_ms,
         });
         // 성공한 쿼리만 활성 프로파일 히스토리에 기록 (격리).

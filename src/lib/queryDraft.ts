@@ -9,6 +9,7 @@ import type {
   CompareOp,
   FirestoreValue,
   OrderBy,
+  PostFilter,
   QueryDsl,
 } from "@/types";
 
@@ -30,6 +31,19 @@ export type DraftWhere = {
   raw: string;
 };
 
+/** 후처리 검색 드래프트. 필드 기반 필터(regex|contains)와 jsonpath는
+ *  독립적이며 둘 다 지정 시 AND 결합된다 (`docs/04-query-dsl.md`). */
+export type DraftPostFilter = {
+  kind: "regex" | "contains";
+  /** 쉼표 분리 필드 경로(점 표기 허용). */
+  fields: string;
+  /** regex 패턴 또는 contains 텍스트. */
+  pattern: string;
+  caseInsensitive: boolean;
+  /** 선택: RFC 9535 JSONPath. */
+  jsonpath: string;
+};
+
 export type QueryDraft = {
   targetKind: "collection" | "collection_group";
   /** collection이면 경로, collection_group이면 그룹 id. */
@@ -37,7 +51,56 @@ export type QueryDraft = {
   wheres: DraftWhere[];
   orderBys: OrderBy[];
   limit: number;
+  postFilter: DraftPostFilter;
 };
+
+export const EMPTY_POST_FILTER: DraftPostFilter = {
+  kind: "regex",
+  fields: "",
+  pattern: "",
+  caseInsensitive: false,
+  jsonpath: "",
+};
+
+/** 드래프트 → DSL PostFilter. 미설정이면 undefined.
+ *  실패(패턴만 있고 필드 없음 등)는 문자열 에러. */
+function buildPostFilter(
+  pf: DraftPostFilter,
+): { ok: true; value?: PostFilter } | { ok: false; error: string } {
+  const out: PostFilter = {};
+  const pattern = pf.pattern.trim();
+  const fields = pf.fields
+    .split(",")
+    .map((f) => f.trim())
+    .filter((f) => f !== "");
+
+  if (pattern !== "") {
+    if (fields.length === 0) {
+      return { ok: false, error: "후처리 검색 필드를 1개 이상 입력하세요" };
+    }
+    if (pf.kind === "regex") {
+      out.regex = {
+        fields,
+        pattern,
+        case_insensitive: pf.caseInsensitive,
+      };
+    } else {
+      out.contains = {
+        fields,
+        text: pattern,
+        case_insensitive: pf.caseInsensitive,
+      };
+    }
+  }
+
+  const jp = pf.jsonpath.trim();
+  if (jp !== "") out.jsonpath = jp;
+
+  if (out.regex === undefined && out.contains === undefined && out.jsonpath === undefined) {
+    return { ok: true };
+  }
+  return { ok: true, value: out };
+}
 
 export type BuildResult =
   | { ok: true; dsl: QueryDsl }
@@ -163,6 +226,10 @@ export function buildDsl(draft: QueryDraft): BuildResult {
   if (where.length > 0) dsl.where = where;
   if (orderBys.length > 0) dsl.order_by = orderBys;
   if (draft.limit > 0) dsl.limit = draft.limit;
+
+  const pf = buildPostFilter(draft.postFilter);
+  if (!pf.ok) return { ok: false, error: pf.error };
+  if (pf.value) dsl.post_filter = pf.value;
 
   return { ok: true, dsl };
 }
