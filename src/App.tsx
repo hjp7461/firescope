@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { ProfileSidebar } from "@/components/profile/ProfileSidebar";
@@ -21,6 +21,7 @@ import { useHistoryStore } from "@/stores/historyStore";
 import { startLogStream } from "@/stores/logStore";
 import { initTheme } from "@/stores/themeStore";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { TabBar } from "@/components/tabs/TabBar";
 import { useResultStore } from "@/stores/resultStore";
 import { useQueryStore } from "@/stores/queryStore";
 import { bindGlobalHotkeys } from "@/lib/hotkeys";
@@ -44,7 +45,9 @@ function App() {
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<ProfileMeta | null>(null);
-  const [pendingProd, setPendingProd] = useState<ProfileMeta | null>(null);
+  const [pendingProd, setPendingProd] = useState<
+    { profile: ProfileMeta; inNewTab: boolean } | null
+  >(null);
   const [builderOpen, setBuilderOpen] = useState(true);
 
   // 진입: 프로파일 목록 + 기존 세션 복구 + 로그 스트림 시작 + 테마 적용.
@@ -63,16 +66,7 @@ function App() {
     void useHistoryStore.getState().load(session?.profile_id ?? null);
   }, [session?.profile_id]);
 
-  // 글로벌 단축키 (Phase 6-F). 콜백을 ref로 받아 매번 새 클로저를 캡처하면서도
-  // keydown 리스너는 한 번만 bind한다 (마운트/언마운트 비용 절감).
-  const onSelectProfileRef = useRef<(idx: number) => void>(() => {});
-  onSelectProfileRef.current = (idx: number) => {
-    const list = useProfileStore.getState().profiles;
-    const p = list[idx];
-    if (!p) return;
-    if (p.require_confirmation) setPendingProd(p);
-    else void doActivate(p, false);
-  };
+  // 글로벌 단축키. 핸들러 내에서 getState()로 매번 최신 상태를 읽으므로 ref 불필요.
   useEffect(() => {
     return bindGlobalHotkeys({
       onRun: () => {
@@ -88,7 +82,32 @@ function App() {
           void useResultStore.getState().cancel();
         }
       },
-      onSelectProfile: (idx) => onSelectProfileRef.current(idx),
+      onSelectTab: (idx) => {
+        const tabs = useTabsStore.getState().tabs;
+        const target = tabs[idx];
+        if (target) useTabsStore.getState().focus(target.id);
+      },
+      onNewTab: () => {
+        useTabsStore.getState().add();
+      },
+      onCloseTab: () => {
+        const { activeTabId } = useTabsStore.getState();
+        if (activeTabId) useTabsStore.getState().close(activeTabId);
+      },
+      onNextTab: () => {
+        const { tabs, activeTabId } = useTabsStore.getState();
+        if (tabs.length < 2) return;
+        const i = tabs.findIndex((t) => t.id === activeTabId);
+        const next = tabs[(i + 1) % tabs.length];
+        useTabsStore.getState().focus(next.id);
+      },
+      onPrevTab: () => {
+        const { tabs, activeTabId } = useTabsStore.getState();
+        if (tabs.length < 2) return;
+        const i = tabs.findIndex((t) => t.id === activeTabId);
+        const prev = tabs[(i - 1 + tabs.length) % tabs.length];
+        useTabsStore.getState().focus(prev.id);
+      },
     });
   }, []);
 
@@ -128,26 +147,39 @@ function App() {
     };
   }, [upsert, removeById]);
 
-  async function doActivate(p: ProfileMeta, confirmed: boolean) {
+  async function doActivate(p: ProfileMeta, confirmed: boolean, inNewTab: boolean) {
     try {
-      const newSession = await activateProfile(p.id, confirmed);
-      // profile:activated 이벤트보다 먼저 즉시 attach — race-free 보장.
-      const tabId = useTabsStore.getState().activeTabId;
-      if (tabId) useTabsStore.getState().setSession(tabId, newSession);
+      let targetTabId: string | null;
+      if (inNewTab) {
+        targetTabId = useTabsStore.getState().add();
+      } else {
+        targetTabId = useTabsStore.getState().activeTabId;
+      }
+      // 활성 탭 자리 교체면 그 탭의 기존 session_id를 백엔드에 넘김 (없으면 null = 새 세션)
+      const existingSessionId = inNewTab
+        ? null
+        : (useTabsStore.getState().tabs.find((t) => t.id === targetTabId)?.session?.session_id ?? null);
+      const newSession = await activateProfile(p.id, confirmed, existingSessionId);
+      if (targetTabId) {
+        useTabsStore.getState().setSession(targetTabId, newSession);
+      }
       toast.success(`${p.name} 활성화됨`);
     } catch (err) {
       const e = asAppError(err);
       if (e.kind === "confirmation_required") {
-        setPendingProd(p);
+        setPendingProd({ profile: p, inNewTab });
         return;
       }
       toast.error(toKoreanMessage(e));
     }
   }
 
-  function onActivate(p: ProfileMeta) {
-    if (p.require_confirmation) setPendingProd(p);
-    else void doActivate(p, false);
+  function onActivate(p: ProfileMeta, inNewTab: boolean) {
+    if (p.require_confirmation) {
+      setPendingProd({ profile: p, inNewTab });
+    } else {
+      void doActivate(p, false, inNewTab);
+    }
   }
 
   async function onDelete(p: ProfileMeta) {
@@ -195,6 +227,7 @@ function App() {
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
+        {profiles.length > 0 && <TabBar />}
         {activeProfile?.read_only_warning && (
           <div className="flex items-center justify-center gap-2 bg-destructive px-4 py-1.5 text-xs font-medium text-white">
             <span className="rounded-sm bg-white/20 px-1.5 py-0.5">운영</span>
@@ -205,7 +238,7 @@ function App() {
             <span>읽기 전용 (쓰기 요청 차단됨)</span>
           </div>
         )}
-        <div className="absolute right-2 top-1 z-10">
+        <div className="absolute right-2 top-10 z-10">
           <ThemeToggle className="size-7 p-0" />
         </div>
 
@@ -238,12 +271,12 @@ function App() {
 
       <ProductionWarningModal
         open={!!pendingProd}
-        profileName={pendingProd?.name ?? ""}
-        projectId={pendingProd?.project_id ?? ""}
+        profileName={pendingProd?.profile.name ?? ""}
+        projectId={pendingProd?.profile.project_id ?? ""}
         onConfirm={() => {
           const p = pendingProd;
           setPendingProd(null);
-          if (p) void doActivate(p, true);
+          if (p) void doActivate(p.profile, true, p.inNewTab);
         }}
         onCancel={() => setPendingProd(null)}
       />

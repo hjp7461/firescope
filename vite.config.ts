@@ -5,6 +5,7 @@ import path from "node:path";
 
 const host = process.env.TAURI_DEV_HOST;
 
+// Vitest 설정은 vitest.config.ts에 분리. 이 파일은 dev/build 전용.
 export default defineConfig(async () => ({
   plugins: [
     react(),

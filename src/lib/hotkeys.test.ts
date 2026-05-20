@@ -6,6 +6,7 @@ function ev(over: Partial<KeyboardEvent>): KeyboardEvent {
     key: "",
     metaKey: false,
     ctrlKey: false,
+    shiftKey: false,
     isComposing: false,
     preventDefault: vi.fn(),
     ...over,
@@ -23,9 +24,9 @@ describe("dispatchHotkey", () => {
 
   it("Ctrl+Enter also triggers onRun (Windows/Linux)", () => {
     const onRun = vi.fn();
-    expect(
-      dispatchHotkey(ev({ key: "Enter", ctrlKey: true }), { onRun }),
-    ).toBe("run");
+    expect(dispatchHotkey(ev({ key: "Enter", ctrlKey: true }), { onRun })).toBe(
+      "run",
+    );
     expect(onRun).toHaveBeenCalled();
   });
 
@@ -43,25 +44,55 @@ describe("dispatchHotkey", () => {
     expect(onCancel).not.toHaveBeenCalled();
   });
 
-  it("Cmd+1..9 selects profile index 0..8", () => {
-    const onSelectProfile = vi.fn();
+  it("Cmd+1..9 selects tab index 0..8", () => {
+    const onSelectTab = vi.fn();
     for (let i = 1; i <= 9; i++) {
-      onSelectProfile.mockClear();
+      onSelectTab.mockClear();
       expect(
-        dispatchHotkey(ev({ key: String(i), metaKey: true }), {
-          onSelectProfile,
-        }),
-      ).toBe("select");
-      expect(onSelectProfile).toHaveBeenCalledWith(i - 1);
+        dispatchHotkey(ev({ key: String(i), metaKey: true }), { onSelectTab }),
+      ).toBe("select-tab");
+      expect(onSelectTab).toHaveBeenCalledWith(i - 1);
     }
   });
 
   it("Cmd+0 does NOT select (only 1..9)", () => {
-    const onSelectProfile = vi.fn();
+    const onSelectTab = vi.fn();
     expect(
-      dispatchHotkey(ev({ key: "0", metaKey: true }), { onSelectProfile }),
+      dispatchHotkey(ev({ key: "0", metaKey: true }), { onSelectTab }),
     ).toBeNull();
-    expect(onSelectProfile).not.toHaveBeenCalled();
+    expect(onSelectTab).not.toHaveBeenCalled();
+  });
+
+  it("Cmd+T triggers onNewTab", () => {
+    const onNewTab = vi.fn();
+    const e = ev({ key: "t", metaKey: true });
+    expect(dispatchHotkey(e, { onNewTab })).toBe("new-tab");
+    expect(onNewTab).toHaveBeenCalled();
+    expect(e.preventDefault).toHaveBeenCalled();
+  });
+
+  it("Cmd+W triggers onCloseTab", () => {
+    const onCloseTab = vi.fn();
+    const e = ev({ key: "w", metaKey: true });
+    expect(dispatchHotkey(e, { onCloseTab })).toBe("close-tab");
+    expect(onCloseTab).toHaveBeenCalled();
+    expect(e.preventDefault).toHaveBeenCalled();
+  });
+
+  it("Ctrl+Tab triggers onNextTab", () => {
+    const onNextTab = vi.fn();
+    const e = ev({ key: "Tab", ctrlKey: true });
+    expect(dispatchHotkey(e, { onNextTab })).toBe("next-tab");
+    expect(onNextTab).toHaveBeenCalled();
+    expect(e.preventDefault).toHaveBeenCalled();
+  });
+
+  it("Ctrl+Shift+Tab triggers onPrevTab", () => {
+    const onPrevTab = vi.fn();
+    const e = ev({ key: "Tab", ctrlKey: true, shiftKey: true });
+    expect(dispatchHotkey(e, { onPrevTab })).toBe("prev-tab");
+    expect(onPrevTab).toHaveBeenCalled();
+    expect(e.preventDefault).toHaveBeenCalled();
   });
 
   it("plain Enter without modifier does nothing", () => {

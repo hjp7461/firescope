@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { cancelStream, queryDocuments } from "@/ipc/query";
-import { getActiveSession, useTabsStore, type TabId } from "@/stores/tabsStore";
+import { getActiveSession, registerTabCloseCleanup, useTabsStore, type TabId } from "@/stores/tabsStore";
 import { useHistoryStore } from "@/stores/historyStore";
 import {
   type FirestoreDocument,
@@ -46,6 +46,7 @@ type ResultState = ResultSlice & {
   runDsl: (dsl: QueryDsl) => Promise<void>;
   cancel: () => Promise<void>;
   reset: () => void;
+  dropTab: (tabId: TabId) => void;
 
   __resetForTests: () => void;
   __setSliceForTest: (tabId: TabId, slice: ResultSlice) => void;
@@ -193,6 +194,22 @@ export const useResultStore = create<ResultState>((set, get) => ({
     }
   },
 
+  dropTab: (tabId) => {
+    const owned: string[] = [];
+    for (const [streamId, owner] of streamIdToTab.entries()) {
+      if (owner === tabId) owned.push(streamId);
+    }
+    for (const streamId of owned) {
+      void teardownStream(streamId);
+    }
+    set((s) => {
+      if (!s.byTab.has(tabId)) return s;
+      const map = new Map(s.byTab);
+      map.delete(tabId);
+      return { ...s, byTab: map };
+    });
+  },
+
   __resetForTests: () => {
     streamIdToTab.clear();
     unlisteners.clear();
@@ -214,4 +231,8 @@ useTabsStore.subscribe((s, prev) => {
     ? useResultStore.getState().byTab.get(s.activeTabId) ?? EMPTY_SLICE
     : EMPTY_SLICE;
   useResultStore.setState(slice);
+});
+
+registerTabCloseCleanup((tabId) => {
+  useResultStore.getState().dropTab(tabId);
 });
