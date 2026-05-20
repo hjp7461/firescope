@@ -16,7 +16,8 @@ UX는 [Firefoo](https://www.firefoo.com/)를 참고했습니다.
 - 📊 **4가지 결과 뷰** — Table / Tree / JSON / Log
 - 🔍 **Firefoo 스타일 쿼리 빌더** — where 조합, orderBy, 커서, 정규식 후처리
 - 💾 **Export** — JSON / NDJSON / CSV, post_filter 적용 시 matched/scanned 분리
-- 📈 **컬렉션 통계** — 샘플(100/500/1000)에서 필드별 type 분포·NULL 비율·상위 값
+- 📈 **컬렉션 통계** — 샘플(100/500/1000)에서 필드별 type 분포·NULL 비율·상위 값, nested map dot-path 펼침
+- 📡 **Live 모드 (Realtime 리스너)** — 결과 패널 토글로 실시간 변경을 in-place 반영 (읽기 전용 유지)
 - 🔗 **누락 인덱스 가이드** — Firestore 인덱스 에러 발생 시 Firebase 콘솔 링크 자동 추출
 - ⭐ **저장된 쿼리** — 프로파일별 히스토리 + 핀(북마크) 분리
 - 🌗 **다크모드** — 시스템/라이트/다크 토글
@@ -81,6 +82,16 @@ pnpm tauri build  # 데스크탑 바이너리 패키징 (LTO release)
 - **Query Builder**에서 where/orderBy/limit/CollectionGroup/post_filter 작성.
 - post_filter는 백엔드가 적용하기 어려운 패턴(정규식·contains·JSONPath)을 클라이언트 측에서 적용 — `scanned`와 `matched`가 분리 카운트됩니다.
 
+### Live 모드 (Realtime 리스너)
+- 쿼리 실행 후 결과 바의 **Live 토글**을 켜면 Firestore Realtime 리스너가 붙어 변경을 실시간으로 결과 테이블에 in-place 반영합니다.
+- 보이는 변경: 문서 **modified**(필드 갱신)와 **removed**(삭제). 신규 문서 추가는 현재 쿼리 결과 범위 안에서만 upsert 됩니다.
+- DSL 서브셋만 지원: `target` + `where`만 사용되며 `order_by` / `limit` / `select` / `cursor` / `post_filter`는 적용되지 않습니다.
+- Live 토글을 다시 끄거나 다른 쿼리를 실행하면 리스너가 종료됩니다. 프로파일을 비활성화(deactivate)하면 모든 리스너가 자동으로 shutdown 됩니다.
+
+### 통계
+- 결과 바의 **통계 보기** → `StatsDialog`에서 샘플 크기(100/500/1000) 선택 후 실행.
+- **nested 펼치기** 토글을 켜면 map 필드를 dot-path(`profile.address.city` 등)로 펼쳐 표시하며, 깊이는 `d1 / d2 / d3 / d5`로 조절합니다 (기본 d3). array는 본문 보호를 위해 펼치지 않습니다.
+
 ### Export
 - 결과 표시 후 `[내보내기 ▼]` → JSON / NDJSON / CSV 선택 → 저장 경로.
 - post_filter 적용 시 **매칭 결과** / **후처리 이전 전체** 두 묶음으로 분기 가능.
@@ -122,6 +133,8 @@ pnpm tauri build  # 데스크탑 바이너리 패키징 (LTO release)
 - [x] **Phase 7** — 다듬기 & 배포 (한국어 에러 매핑 / 첫 실행 온보딩 / 운영 경고 / `tauri build`)
 - [x] **Phase 8** — 워크플로 가속 (인덱스 자동 가이드 / 저장된 쿼리 / 프로파일 그룹)
 - [x] **Phase 9** — 컬렉션 통계 (필드별 type 분포 / NULL 비율 / 상위 값)
+- [x] **Phase 10** — 컬렉션 통계 nested 필드 펼침 (dot-path)
+- [x] **Phase 11** — Realtime 리스너 모드 (읽기 전용)
 
 ## 보안 약속
 
