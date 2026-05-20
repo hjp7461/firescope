@@ -1,3 +1,5 @@
-allowBuilds:
-  esbuild: set this to true or false
-  msw: set this to true or false
+# pnpm 10+ requires explicit approval to run package install scripts.
+# esbuild ships a native binary built via postinstall; `tauri build` invokes
+# `pnpm install` non-interactively so we approve it here.
+onlyBuiltDependencies:
+  - esbuild
