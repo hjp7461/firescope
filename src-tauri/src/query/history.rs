@@ -20,6 +20,9 @@ use crate::query::dsl::QueryDsl;
 const MAX_PER_PROFILE: usize = 100;
 
 /// 히스토리 1건 (`docs/03-ipc-contract.md` `QueryHistoryEntry`).
+///
+/// `pinned`는 Phase 8-B에서 추가. 기존 저장 데이터에는 필드가 없어
+/// `#[serde(default)]`로 false 폴백한다.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
     pub id: Uuid,
@@ -29,6 +32,8 @@ pub struct HistoryEntry {
     pub took_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_count: Option<u64>,
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 /// `query-history.json` 전체 — 프로파일 ID → 최신순 항목 목록.
@@ -49,6 +54,24 @@ fn same_dsl(a: &QueryDsl, b: &QueryDsl) -> bool {
     match (serde_json::to_value(a), serde_json::to_value(b)) {
         (Ok(x), Ok(y)) => x == y,
         _ => false,
+    }
+}
+
+/// pinned 항목은 보존하고 unpinned가 `cap`을 초과하면 가장 오래된(=리스트
+/// 뒤쪽) unpinned부터 제거. Phase 8-B.
+fn truncate_unpinned(list: &mut Vec<HistoryEntry>, cap: usize) {
+    let unpinned_total = list.iter().filter(|e| !e.pinned).count();
+    let mut to_drop = unpinned_total.saturating_sub(cap);
+    if to_drop == 0 {
+        return;
+    }
+    let mut i = list.len();
+    while i > 0 && to_drop > 0 {
+        i -= 1;
+        if !list[i].pinned {
+            list.remove(i);
+            to_drop -= 1;
+        }
     }
 }
 
@@ -110,9 +133,10 @@ impl QueryHistoryManager {
                         executed_at: Utc::now(),
                         took_ms,
                         result_count,
+                        pinned: false,
                     };
                     list.insert(0, entry.clone());
-                    list.truncate(MAX_PER_PROFILE);
+                    truncate_unpinned(list, MAX_PER_PROFILE);
                     entry
                 }
             }
@@ -138,6 +162,33 @@ impl QueryHistoryManager {
             self.data.write().by_profile.remove(&profile_id);
         }
         self.persist()
+    }
+
+    /// 단일 항목의 핀 플래그 토글 (Phase 8-B). 갱신된 entry를 반환한다.
+    /// 항목이 존재하지 않으면 `internal` 에러.
+    pub fn pin(
+        &self,
+        profile_id: Uuid,
+        entry_id: Uuid,
+        pinned: bool,
+    ) -> AppResult<HistoryEntry> {
+        let entry = {
+            let mut data = self.data.write();
+            let list = data.by_profile.get_mut(&profile_id).ok_or_else(|| {
+                crate::error::AppError::Internal {
+                    message: "history entry not found".into(),
+                }
+            })?;
+            let target = list.iter_mut().find(|e| e.id == entry_id).ok_or_else(|| {
+                crate::error::AppError::Internal {
+                    message: "history entry not found".into(),
+                }
+            })?;
+            target.pinned = pinned;
+            target.clone()
+        };
+        self.persist()?;
+        Ok(entry)
     }
 }
 
@@ -281,6 +332,49 @@ mod tests {
         m.add(p, dsl("a"), None, None).unwrap();
         m.clear(p).unwrap();
         assert_eq!(m.list(p).len(), 0);
+    }
+
+    #[test]
+    fn pinned_entries_survive_the_unpinned_cap() {
+        let (m, _) = mgr();
+        let p = Uuid::new_v4();
+        let pinned = m.add(p, dsl("pinned_query"), None, None).unwrap();
+        m.pin(p, pinned.id, true).unwrap();
+
+        // 100개 cap을 unpinned로 넘긴다 (총 101개 중 1개는 pinned).
+        for i in 0..101 {
+            m.add(p, dsl(&format!("c{i}")), None, None).unwrap();
+        }
+
+        let list = m.list(p);
+        // unpinned 100개 + pinned 1개 = 101.
+        assert_eq!(list.len(), 101);
+        // pinned는 살아남는다.
+        let still_pinned = list.iter().find(|e| e.id == pinned.id);
+        assert!(still_pinned.is_some_and(|e| e.pinned));
+    }
+
+    #[test]
+    fn pin_toggles_flag_and_returns_updated_entry() {
+        let (m, _) = mgr();
+        let p = Uuid::new_v4();
+        let e = m.add(p, dsl("q"), None, None).unwrap();
+        assert!(!e.pinned);
+
+        let after = m.pin(p, e.id, true).unwrap();
+        assert!(after.pinned);
+        let list = m.list(p);
+        assert_eq!(list[0].pinned, true);
+
+        let after = m.pin(p, e.id, false).unwrap();
+        assert!(!after.pinned);
+    }
+
+    #[test]
+    fn pin_nonexistent_entry_errors() {
+        let (m, _) = mgr();
+        let p = Uuid::new_v4();
+        assert!(m.pin(p, Uuid::new_v4(), true).is_err());
     }
 
     #[test]

@@ -77,6 +77,8 @@ struct PortableProfile {
     color: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    group: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -224,6 +226,7 @@ pub fn export_profiles(
             mode: p.mode,
             color: p.color,
             tags: p.tags,
+            group: p.group,
         })
         .collect();
 
@@ -268,6 +271,7 @@ pub fn import_profiles(
             mode: entry.mode,
             color: entry.color,
             tags: Some(entry.tags),
+            group: entry.group,
             firestore_host: None,
             auth_host: None,
             require_confirmation: None,
