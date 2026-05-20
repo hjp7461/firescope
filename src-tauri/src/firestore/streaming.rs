@@ -13,6 +13,8 @@ use parking_lot::Mutex;
 use serde::Serialize;
 use tauri::{Emitter, Runtime};
 
+use uuid::Uuid;
+
 use crate::error::{AppError, AppResult};
 use crate::firestore::{
     decode_document, extract_firestore_index_url, Document, FirestoreClient, ResultSink,
@@ -25,12 +27,14 @@ const PAGE: usize = 100;
 
 #[derive(Serialize, Clone)]
 struct ChunkPayload {
+    session_id: Uuid,
     docs: Vec<Document>,
     page: u32,
 }
 
 #[derive(Serialize, Clone)]
 struct DonePayload {
+    session_id: Uuid,
     /// 후처리 통과(매칭) 문서 수 = chunk로 전달된 합계.
     total: usize,
     /// Firestore에서 가져온 전체 문서 수 (post_filter 없으면 total과 동일).
@@ -44,6 +48,7 @@ struct DonePayload {
 /// (`docs/03-ipc-contract.md` v0.6)
 #[derive(Serialize, Clone)]
 struct QueryErrorPayload {
+    session_id: Uuid,
     #[serde(flatten)]
     error: AppError,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -59,6 +64,7 @@ pub async fn run_query<R: Runtime>(
     registry: Arc<StreamRegistry>,
     sink: Option<Arc<Mutex<ResultSink>>>,
     stream_id: String,
+    session_id: Uuid,
     dsl: QueryDsl,
 ) {
     let chunk_ev = format!("query:chunk:{stream_id}");
@@ -151,6 +157,7 @@ pub async fn run_query<R: Runtime>(
                 let _ = app.emit(
                     &chunk_ev,
                     ChunkPayload {
+                        session_id,
                         docs: std::mem::take(&mut buf),
                         page,
                     },
@@ -162,6 +169,7 @@ pub async fn run_query<R: Runtime>(
             let _ = app.emit(
                 &chunk_ev,
                 ChunkPayload {
+                    session_id,
                     docs: std::mem::take(&mut buf),
                     page,
                 },
@@ -188,6 +196,7 @@ pub async fn run_query<R: Runtime>(
             let _ = app.emit(
                 &done_ev,
                 DonePayload {
+                    session_id,
                     total: matched,
                     scanned,
                     took_ms,
@@ -196,7 +205,7 @@ pub async fn run_query<R: Runtime>(
             );
         }
         Err((error, index_url)) => {
-            let _ = app.emit(&err_ev, QueryErrorPayload { error, index_url });
+            let _ = app.emit(&err_ev, QueryErrorPayload { session_id, error, index_url });
         }
     }
 }
