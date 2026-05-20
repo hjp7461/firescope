@@ -15,6 +15,9 @@ UX는 [Firefoo](https://www.firefoo.com/)를 참고했습니다.
 - 🐳 **에뮬레이터 우선 개발** — Docker 로컬 에뮬레이터
 - 📊 **4가지 결과 뷰** — Table / Tree / JSON / Log
 - 🔍 **Firefoo 스타일 쿼리 빌더** — where 조합, orderBy, 커서, 정규식 후처리
+- 💾 **Export** — JSON / NDJSON / CSV, post_filter 적용 시 matched/scanned 분리
+- 🌗 **다크모드** — 시스템/라이트/다크 토글
+- ⌨️ **단축키** — `Cmd/Ctrl+Enter` 실행, `Esc` 취소, `Cmd/Ctrl+1..9` 프로파일 빠른 전환
 
 ## 기술 스택
 
@@ -51,8 +54,46 @@ GCLOUD_PROJECT=demo-firescope
 
 ```bash
 pnpm build        # 프론트엔드 타입체크 + 번들
-pnpm tauri build  # 데스크탑 바이너리 패키징
+pnpm tauri build  # 데스크탑 바이너리 패키징 (LTO release)
 ```
+
+산출물:
+
+- macOS: `src-tauri/target/release/bundle/macos/Firescope.app` + `dmg/Firescope_<ver>.dmg`
+- Windows: `src-tauri/target/release/bundle/msi/Firescope_<ver>.msi`
+- Linux: `src-tauri/target/release/bundle/{deb,appimage}/`
+
+코드 사이닝/Notarization은 별도 인증서가 필요합니다 (현재 unsigned 빌드).
+
+## 사용법
+
+### 첫 실행
+1. 좌측 사이드바의 `+`로 프로파일 추가 (이름, 프로젝트 ID, 인증 모드 선택).
+2. 자격증명 입력 — 서비스 계정 JSON 파일을 선택하거나 ID 토큰을 붙여 넣으면 OS Vault에 저장됩니다.
+3. 검증 단계에서 연결 테스트 후 저장.
+4. 사이드바의 프로파일을 **더블클릭하여 활성화**.
+
+### 쿼리
+- 좌측 **Collections** 패널에서 컬렉션 클릭 → 첫 100건 표시.
+- **Query Builder**에서 where/orderBy/limit/CollectionGroup/post_filter 작성.
+- post_filter는 백엔드가 적용하기 어려운 패턴(정규식·contains·JSONPath)을 클라이언트 측에서 적용 — `scanned`와 `matched`가 분리 카운트됩니다.
+
+### Export
+- 결과 표시 후 `[내보내기 ▼]` → JSON / NDJSON / CSV 선택 → 저장 경로.
+- post_filter 적용 시 **매칭 결과** / **후처리 이전 전체** 두 묶음으로 분기 가능.
+- CSV는 모든 문서의 필드 union을 헤더로 사용 (nested 값은 JSON 문자열로).
+
+### 단축키
+
+| 키 | 동작 |
+|---|---|
+| `Cmd/Ctrl + Enter` | 현재 빌더의 쿼리 실행 |
+| `Esc` | 진행 중 스트림 취소 (한글 IME 조합 중 제외) |
+| `Cmd/Ctrl + 1..9` | n번째 프로파일 빠른 전환 |
+
+## 스크린샷
+
+(추가 예정)
 
 ## 디렉토리 구조
 
@@ -67,11 +108,11 @@ pnpm tauri build  # 데스크탑 바이너리 패키징
 - [x] **Phase 0** — 스캐폴딩 (Tauri + Vite + shadcn/ui)
 - [x] **Phase 1** — 프로파일 관리 기반 (CRUD + OS Vault + 세션)
 - [x] **Phase 2** — 기본 조회 + Table 뷰 (스트리밍 + 가상화 테이블)
-- [ ] **Phase 3** — Tree / JSON / Log 뷰 + 뷰 전환 탭
-- [ ] **Phase 4** — 정교한 쿼리 빌더 (전체 연산자 + 히스토리)
-- [ ] **Phase 5** — 클라이언트 후처리 검색 (정규식/contains)
-- [ ] **Phase 6** — Export & 편의 기능
-- [ ] **Phase 7** — 다듬기 & 배포
+- [x] **Phase 3** — Tree / JSON / Log 뷰 + 뷰 전환 탭
+- [x] **Phase 4** — 정교한 쿼리 빌더 (전체 연산자 + 히스토리)
+- [x] **Phase 5** — 클라이언트 후처리 검색 (정규식/contains/JSONPath)
+- [x] **Phase 6** — Export(디스크 sink) / 카운트 / 다크모드 / 단축키
+- [x] **Phase 7** — 다듬기 & 배포
 
 ## 보안 약속
 
