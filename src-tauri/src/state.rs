@@ -1,8 +1,9 @@
 //! Tauri 관리 상태 (`app.manage`)와 세션 수명주기.
 //!
-//! 동시 활성 세션은 **항상 1개**다 (`docs/07-profiles.md` 다중 세션 기본
-//! 정책). 프로파일 전환 시 기존 세션을 먼저 해제하고 진행 중 스트림을
-//! 모두 취소한 뒤 새 세션을 활성화한다.
+//! 동시 활성 세션은 **N개**다 (`docs/07-profiles.md` 멀티 세션 정책,
+//! IPC v0.8). 세션은 `HashMap<session_id, ActiveSession>`로 보관되며,
+//! 각 세션마다 자체 인증/Firestore 연결을 가진다. 세션 종료 시 해당
+//! 세션의 진행 중 스트림만 취소된다.
 
 use std::sync::Arc;
 
@@ -11,6 +12,9 @@ use parking_lot::RwLock;
 use serde::Serialize;
 use tauri::{Emitter, Runtime};
 use uuid::Uuid;
+
+/// 멀티탭 세션 소프트캡. 초과해도 거부하지 않고 `session:limit_warning` 이벤트만 emit.
+const SESSION_SOFT_CAP: usize = 10;
 
 use crate::adapters::TauriTokenSink;
 use crate::auth::{AuthHandle, EmulatorAuth, IdTokenAuth, ServiceAccountAuth};
@@ -300,17 +304,29 @@ pub struct Session {
 
 #[derive(Serialize, Clone)]
 struct DeactivatedPayload {
+    session_id: Uuid,
     profile_id: Uuid,
+}
+
+#[derive(Serialize, Clone)]
+struct SessionLimitWarning {
+    active: usize,
+    max: usize,
 }
 
 /// 활성 세션 1개의 런타임 묶음. `Drop`되면 `ServiceAccountAuth`의 토큰
 /// 갱신 태스크도 함께 정리된다 (그쪽 `Drop`이 abort).
-struct ActiveSession {
-    session_id: Uuid,
-    profile: Profile,
-    firestore: FirestoreClient,
-    auth: Arc<dyn AuthHandle>,
-    activated_at: DateTime<Utc>,
+///
+/// `firestore`는 멀티 세션 N-맵 도입 시 단위 테스트(네트워크 미접속)에서
+/// `None`으로 만들 수 있도록 `Option`이다. 프로덕션 경로(`activate`)는
+/// 반드시 `Some`을 채워 넣고, `SessionManager::firestore(session_id)`는
+/// `None`이면 `AppError::Internal`을 반환해 호출부가 알아챌 수 있게 한다.
+pub(super) struct ActiveSession {
+    pub(super) session_id: Uuid,
+    pub(super) profile: Profile,
+    pub(super) firestore: Option<FirestoreClient>,
+    pub(super) auth: Arc<dyn AuthHandle>,
+    pub(super) activated_at: DateTime<Utc>,
 }
 
 impl ActiveSession {
@@ -327,15 +343,18 @@ impl ActiveSession {
     }
 }
 
+/// N개의 활성 세션을 `session_id` 기준 `HashMap`으로 관리한다.
+/// 각 세션은 자체 `ActiveSession`(프로파일·인증·Firestore 연결)을 가진다.
+/// 멀티 탭 백엔드의 코어 (`docs/superpowers/specs/2026-05-20-multi-tab-design.md` §3.1).
 pub struct SessionManager {
-    active: RwLock<Option<ActiveSession>>,
+    pub(super) sessions: RwLock<std::collections::HashMap<Uuid, ActiveSession>>,
     streams: Arc<StreamRegistry>,
 }
 
 impl SessionManager {
     pub fn new() -> Self {
         Self {
-            active: RwLock::new(None),
+            sessions: RwLock::new(std::collections::HashMap::new()),
             streams: Arc::new(StreamRegistry::new()),
         }
     }
@@ -344,15 +363,83 @@ impl SessionManager {
         &self.streams
     }
 
-    pub fn current(&self) -> Option<Session> {
-        self.active.read().as_ref().map(ActiveSession::to_dto)
+    /// 현재 활성 세션 수.
+    pub fn session_count(&self) -> usize {
+        self.sessions.read().len()
     }
 
-    pub fn is_active(&self) -> bool {
-        self.active.read().is_some()
+    /// 지정 세션의 DTO(`Session`). 없으면 `None`.
+    pub fn current(&self, session_id: Uuid) -> Option<Session> {
+        self.sessions
+            .read()
+            .get(&session_id)
+            .map(ActiveSession::to_dto)
     }
 
-    /// 프로파일을 활성화하여 세션을 시작한다.
+    /// 모든 활성 세션의 DTO 목록.
+    pub fn list(&self) -> Vec<Session> {
+        self.sessions
+            .read()
+            .values()
+            .map(ActiveSession::to_dto)
+            .collect()
+    }
+
+    /// 지정 세션의 라이브 Firestore 클라이언트 (clone은 값쌈 — 내부 Arc).
+    /// 잠금을 await 너머로 들고 가지 않도록 clone해서 반환한다.
+    pub fn firestore(&self, session_id: Uuid) -> AppResult<FirestoreClient> {
+        let guard = self.sessions.read();
+        let session = guard.get(&session_id).ok_or_else(|| {
+            AppError::session_not_found(session_id, "no active session for that id")
+        })?;
+        match &session.firestore {
+            Some(client) => Ok(client.clone()),
+            // 테스트 스텁(`fake_session`)으로 만들어진 세션 — 프로덕션 코드 경로에서는
+            // 절대 발생하지 않아야 하므로 Internal로 표시한다.
+            None => Err(AppError::internal(
+                "test stub: no firestore client attached to session",
+            )),
+        }
+    }
+
+    /// 지정 세션의 토큰을 강제 갱신하고 `(profile_id, 새 만료시각)`을 반환.
+    /// 잠금을 await 너머로 들고 가지 않도록 핸들만 꺼낸 뒤 갱신한다.
+    pub async fn refresh_token(
+        &self,
+        session_id: Uuid,
+    ) -> AppResult<(Uuid, DateTime<Utc>)> {
+        let handle = {
+            let guard = self.sessions.read();
+            guard
+                .get(&session_id)
+                .map(|s| (s.profile.id, Arc::clone(&s.auth)))
+        };
+        let (profile_id, auth) = handle.ok_or_else(|| {
+            AppError::session_not_found(session_id, "no active session to refresh")
+        })?;
+        let expires_at = auth.force_refresh().await?.ok_or_else(|| AppError::Auth {
+            message: "active session has no refreshable token".into(),
+        })?;
+        Ok((profile_id, expires_at))
+    }
+
+    /// 직접적 맵 제거 — 테스트와 `deactivate*` 흐름 내부에서 사용한다.
+    /// 프로덕션 경로는 `deactivate`를 호출해 이벤트까지 같이 발행해야 한다.
+    pub(super) fn remove_session(&self, session_id: Uuid) -> Option<ActiveSession> {
+        self.sessions.write().remove(&session_id)
+    }
+
+    /// 모든 세션 맵을 비운다 — 테스트와 `deactivate_all` 내부 보조 함수.
+    pub(super) fn remove_all_sessions(&self) {
+        self.sessions.write().clear();
+    }
+
+    /// 프로파일을 활성화하여 새 세션을 시작하거나, 지정된 세션을 새 프로파일로
+    /// 교체한다 (탭 단위 활성화).
+    ///
+    /// - `session_id: None` → 새 세션을 생성 (새 탭).
+    /// - `session_id: Some(existing)` → 그 세션(탭)을 새 프로파일로 대체.
+    ///   그 세션이 보유하던 스트림만 취소되고, 다른 세션은 영향받지 않는다.
     ///
     /// 순서가 중요하다: 인증 핸들 구성(서비스 계정은 실제 토큰 왕복)을
     /// **기존 세션을 건드리기 전에** 끝낸다. 실패하면 기존 세션을 그대로
@@ -362,6 +449,7 @@ impl SessionManager {
         app: &tauri::AppHandle<R>,
         profiles: &ProfileManager,
         profile_id: Uuid,
+        session_id: Option<Uuid>,
         confirmed: bool,
     ) -> AppResult<Session> {
         let profile = profiles.get_profile(profile_id).ok_or_else(|| {
@@ -380,79 +468,115 @@ impl SessionManager {
         let auth = self.build_auth(app, &profile, credential.as_ref()).await?;
         let firestore = FirestoreClient::connect(&profile, credential.as_ref()).await?;
 
-        // 3) 기존 세션 해제 (스트림 취소 + 이벤트). prev drop 시 토큰 태스크 정리.
-        let previous = self.active.write().take();
-        if let Some(prev) = previous {
-            self.streams.cancel_all();
-            let _ = app.emit(
-                "profile:deactivated",
-                DeactivatedPayload {
-                    profile_id: prev.profile.id,
-                },
-            );
-            drop(prev);
-        }
+        // 2) 교체 대상이 있으면 그 세션의 스트림만 정리.
+        let new_session_id = match session_id {
+            Some(existing) => {
+                self.streams.cancel_session(existing);
+                if let Some(prev) = self.remove_session(existing) {
+                    let prev_profile_id = prev.profile.id;
+                    drop(prev);
+                    let _ = app.emit(
+                        "profile:deactivated",
+                        DeactivatedPayload {
+                            session_id: existing,
+                            profile_id: prev_profile_id,
+                        },
+                    );
+                }
+                existing
+            }
+            None => Uuid::new_v4(),
+        };
 
-        // 4) 새 세션 설치.
+        // 3) 새 세션 설치.
         let session = ActiveSession {
-            session_id: Uuid::new_v4(),
+            session_id: new_session_id,
             profile,
-            firestore,
+            firestore: Some(firestore),
             auth,
             activated_at: Utc::now(),
         };
         let dto = session.to_dto();
-        *self.active.write() = Some(session);
+        self.sessions.write().insert(new_session_id, session);
+
+        // 4) 소프트캡 안내 (활성화는 진행).
+        let count = self.session_count();
+        if count > SESSION_SOFT_CAP {
+            let _ = app.emit(
+                "session:limit_warning",
+                SessionLimitWarning {
+                    active: count,
+                    max: SESSION_SOFT_CAP,
+                },
+            );
+        }
 
         tracing::info!(
             target: "session",
             profile_id = %profile_id,
-            session_id = %dto.session_id,
+            session_id = %new_session_id,
+            active_count = count,
             "profile activated"
         );
         let _ = app.emit("profile:activated", dto.clone());
         Ok(dto)
     }
 
-    /// 현재 세션 종료. 진행 중 스트림 취소. 활성 세션이 없어도 성공(idempotent).
-    pub fn deactivate<R: Runtime>(&self, app: &tauri::AppHandle<R>) -> AppResult<()> {
-        let previous = self.active.write().take();
-        if let Some(prev) = previous {
-            self.streams.cancel_all();
+    /// 지정 세션을 종료한다. 그 세션이 가진 진행 중 스트림만 취소된다.
+    /// 다른 세션 / 알 수 없는 세션 id에 대해서는 idempotent.
+    pub fn deactivate<R: Runtime>(
+        &self,
+        app: &tauri::AppHandle<R>,
+        session_id: Uuid,
+    ) -> AppResult<()> {
+        self.streams.cancel_session(session_id);
+        if let Some(prev) = self.remove_session(session_id) {
             let profile_id = prev.profile.id;
             drop(prev);
-            tracing::info!(target: "session", profile_id = %profile_id, "profile deactivated");
-            let _ = app.emit("profile:deactivated", DeactivatedPayload { profile_id });
+            tracing::info!(
+                target: "session",
+                session_id = %session_id,
+                profile_id = %profile_id,
+                "session deactivated"
+            );
+            let _ = app.emit(
+                "profile:deactivated",
+                DeactivatedPayload {
+                    session_id,
+                    profile_id,
+                },
+            );
         }
         Ok(())
     }
 
-    /// 활성 세션의 토큰을 강제 갱신하고 `(profile_id, 새 만료시각)`을 반환.
-    /// 잠금을 await 너머로 들고 가지 않도록 핸들만 꺼낸 뒤 갱신한다.
-    pub async fn refresh_token(&self) -> AppResult<(Uuid, DateTime<Utc>)> {
-        let handle = {
-            let guard = self.active.read();
-            guard.as_ref().map(|s| (s.profile.id, Arc::clone(&s.auth)))
+    /// 모든 활성 세션을 종료한다. 윈도우 종료 / 앱 종료 직전에 호출.
+    /// 각 세션마다 `profile:deactivated` 이벤트가 발행된다.
+    pub fn deactivate_all<R: Runtime>(&self, app: &tauri::AppHandle<R>) {
+        // 이벤트를 세션별로 발행하기 위해 drain.
+        let drained: Vec<(Uuid, Uuid)> = {
+            let mut guard = self.sessions.write();
+            guard
+                .drain()
+                .map(|(sid, s)| (sid, s.profile.id))
+                .collect()
         };
-        let (profile_id, auth) = handle.ok_or_else(|| AppError::NoSession {
-            message: "no active session to refresh".into(),
-        })?;
-        let expires_at = auth.force_refresh().await?.ok_or_else(|| AppError::Auth {
-            message: "active session has no refreshable token".into(),
-        })?;
-        Ok((profile_id, expires_at))
-    }
-
-    /// 활성 세션의 라이브 Firestore 클라이언트 (clone은 값쌈 — 내부 Arc).
-    /// 잠금을 await 너머로 들고 가지 않도록 clone해서 반환한다.
-    pub fn firestore(&self) -> AppResult<FirestoreClient> {
-        self.active
-            .read()
-            .as_ref()
-            .map(|s| s.firestore.clone())
-            .ok_or_else(|| AppError::NoSession {
-                message: "no active session".into(),
-            })
+        self.streams.cancel_all();
+        for (sid, pid) in drained {
+            tracing::info!(
+                target: "session",
+                session_id = %sid,
+                profile_id = %pid,
+                "session deactivated (deactivate_all)"
+            );
+            let _ = app.emit(
+                "profile:deactivated",
+                DeactivatedPayload {
+                    session_id: sid,
+                    profile_id: pid,
+                },
+            );
+        }
     }
 
     /// 모드별 인증 핸들 생성. 자격증명 본문은 여기서 Vault → AuthHandle로만
@@ -515,5 +639,106 @@ impl AppState {
             sessions: SessionManager::new(),
             history,
         }
+    }
+}
+
+#[cfg(test)]
+mod session_manager_tests {
+    //! `SessionManager`의 다중 세션 거동.
+    //!
+    //! 실제 `activate`는 `AppHandle`과 토큰 발급이 필요해 단위테스트에서
+    //! 못 만지지만, 세션 맵 자체와 `remove_session*`은 검증 가능하다.
+    //! `ActiveSession.firestore`는 `Option`이라 테스트는 `None`으로 둔다.
+    use super::*;
+
+    fn fake_session(profile_id: Uuid) -> ActiveSession {
+        ActiveSession {
+            session_id: Uuid::new_v4(),
+            profile: Profile {
+                id: profile_id,
+                name: "test".into(),
+                description: None,
+                project_id: "demo".into(),
+                mode: ProfileMode::Emulator,
+                color: None,
+                tags: Vec::new(),
+                group: None,
+                firestore_host: Some("localhost:8080".into()),
+                auth_host: None,
+                require_confirmation: false,
+                read_only_warning: false,
+                credential_ref: None,
+                created_at: Utc::now(),
+                last_used_at: None,
+                use_count: 0,
+            },
+            firestore: None,
+            auth: Arc::new(EmulatorAuth),
+            activated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn list_starts_empty() {
+        let m = SessionManager::new();
+        assert!(m.list().is_empty());
+        assert_eq!(m.session_count(), 0);
+    }
+
+    #[test]
+    fn insert_then_get_returns_dto() {
+        let m = SessionManager::new();
+        let sess = fake_session(Uuid::new_v4());
+        let sid = sess.session_id;
+        m.sessions.write().insert(sid, sess);
+
+        let dto = m.current(sid).expect("session present");
+        assert_eq!(dto.session_id, sid);
+        assert_eq!(m.session_count(), 1);
+        assert_eq!(m.list().len(), 1);
+    }
+
+    #[test]
+    fn current_returns_none_for_unknown_session() {
+        let m = SessionManager::new();
+        assert!(m.current(Uuid::new_v4()).is_none());
+    }
+
+    #[test]
+    fn remove_session_unknown_id_is_idempotent() {
+        let m = SessionManager::new();
+        let removed = m.remove_session(Uuid::new_v4());
+        assert!(removed.is_none());
+        assert_eq!(m.session_count(), 0);
+    }
+
+    #[test]
+    fn deactivate_removes_one_session_only() {
+        let m = SessionManager::new();
+        let s1 = fake_session(Uuid::new_v4());
+        let s2 = fake_session(Uuid::new_v4());
+        let sid1 = s1.session_id;
+        let sid2 = s2.session_id;
+        m.sessions.write().insert(sid1, s1);
+        m.sessions.write().insert(sid2, s2);
+
+        let removed = m.remove_session(sid1);
+        assert!(removed.is_some());
+
+        assert_eq!(m.session_count(), 1);
+        assert!(m.current(sid1).is_none());
+        assert!(m.current(sid2).is_some());
+    }
+
+    #[test]
+    fn deactivate_all_clears_map() {
+        let m = SessionManager::new();
+        for _ in 0..3 {
+            let s = fake_session(Uuid::new_v4());
+            m.sessions.write().insert(s.session_id, s);
+        }
+        assert_eq!(m.session_count(), 3);
+        m.remove_all_sessions();
+        assert_eq!(m.session_count(), 0);
     }
 }
