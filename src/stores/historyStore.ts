@@ -3,6 +3,7 @@ import {
   addQueryHistory,
   clearQueryHistory,
   listQueryHistory,
+  pinQueryHistory,
   removeQueryHistory,
 } from "@/ipc/query";
 import { asAppError, type QueryDsl, type QueryHistoryEntry } from "@/types";
@@ -24,6 +25,8 @@ type HistoryState = {
   ) => Promise<void>;
   remove: (entryId: string) => Promise<void>;
   clear: () => Promise<void>;
+  /** Phase 8-B: 핀 토글 (서버 기록 + 로컬 entry 갱신). */
+  togglePin: (entryId: string, pinned: boolean) => Promise<void>;
 };
 
 export const useHistoryStore = create<HistoryState>((set, get) => ({
@@ -76,6 +79,19 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     try {
       await clearQueryHistory(pid);
       set({ entries: [] });
+    } catch (err) {
+      throw asAppError(err);
+    }
+  },
+
+  togglePin: async (entryId, pinned) => {
+    const pid = get().profileId;
+    if (!pid) return;
+    try {
+      const updated = await pinQueryHistory(pid, entryId, pinned);
+      set((s) => ({
+        entries: s.entries.map((e) => (e.id === entryId ? updated : e)),
+      }));
     } catch (err) {
       throw asAppError(err);
     }

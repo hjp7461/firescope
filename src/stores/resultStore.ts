@@ -8,6 +8,7 @@ import {
   type QueryChunk,
   type QueryDone,
   type QueryDsl,
+  type QueryErrorPayload,
 } from "@/types";
 import { toKoreanMessage } from "@/lib/errorMessages";
 
@@ -24,6 +25,8 @@ type ResultState = {
   scanned: number;
   tookMs: number | null;
   error: string | null;
+  /** Phase 8-A: Firestore 누락 인덱스 안내 URL (있을 때만). */
+  indexUrl: string | null;
   runCollectionQuery: (path: string) => Promise<void>;
   runDsl: (dsl: QueryDsl) => Promise<void>;
   cancel: () => Promise<void>;
@@ -56,6 +59,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
   scanned: 0,
   tookMs: null,
   error: null,
+  indexUrl: null,
 
   reset: () => {
     void teardown();
@@ -69,6 +73,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
       scanned: 0,
       tookMs: null,
       error: null,
+      indexUrl: null,
     });
   },
 
@@ -85,6 +90,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
       scanned: 0,
       tookMs: null,
       error: null,
+      indexUrl: null,
     });
 
     // stream_id별 동적 이벤트 구독 (시작 전에 걸어 청크 유실 방지).
@@ -111,14 +117,15 @@ export const useResultStore = create<ResultState>((set, get) => ({
         }
         void teardown();
       }),
-      listen<{ kind: string; message: string }>(
-        `query:error:${streamId}`,
-        (e) => {
-          if (get().streamId !== streamId) return;
-          set({ status: "error", error: toKoreanMessage(e.payload) });
-          void teardown();
-        },
-      ),
+      listen<QueryErrorPayload>(`query:error:${streamId}`, (e) => {
+        if (get().streamId !== streamId) return;
+        set({
+          status: "error",
+          error: toKoreanMessage(e.payload),
+          indexUrl: e.payload.index_url ?? null,
+        });
+        void teardown();
+      }),
     ]);
 
     try {

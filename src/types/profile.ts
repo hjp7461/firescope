@@ -12,6 +12,8 @@ export type ProfileMeta = {
   mode: ProfileMode;
   color?: string;
   tags?: string[];
+  /** Phase 8-C: 사이드바 분류 그룹 (자유 문자열, 없으면 "그룹 없음"). */
+  group?: string;
   firestore_host?: string;
   auth_host?: string;
   require_confirmation: boolean;
@@ -29,6 +31,8 @@ export type CreateProfileParams = {
   mode: ProfileMode;
   color?: string;
   tags?: string[];
+  /** Phase 8-C: 사이드바 분류 그룹 (자유 문자열, 없으면 "그룹 없음"). */
+  group?: string;
   firestore_host?: string;
   auth_host?: string;
   require_confirmation?: boolean;
@@ -41,6 +45,8 @@ export type UpdateProfileParams = {
   description?: string;
   color?: string;
   tags?: string[];
+  /** Phase 8-C: 사이드바 분류 그룹 (자유 문자열, 없으면 "그룹 없음"). */
+  group?: string;
   firestore_host?: string;
   auth_host?: string;
   require_confirmation?: boolean;

@@ -103,6 +103,16 @@ export type QueryHistoryEntry = {
   executed_at: string;
   took_ms?: number;
   result_count?: number;
+  /** Phase 8-B: 핀(북마크). 핀된 항목은 100개 캡에서 제외된다. */
+  pinned: boolean;
+};
+
+/** query:error 페이로드 — AppError + 옵션 index_url (Phase 8-A). */
+export type QueryErrorPayload = {
+  kind: string;
+  message: string;
+  /** Firestore가 누락 인덱스 에러에 포함시킨 콘솔 URL. 있으면 클릭 링크로 노출. */
+  index_url?: string;
 };
 
 // query_documents 이벤트 페이로드 (`query:chunk|done|error:<stream_id>`).
