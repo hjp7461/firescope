@@ -46,6 +46,15 @@ export const useTabsStore = create<TabsState>((set, get) => ({
   },
 
   close: (id) => {
+    for (const fn of closeCleanups) {
+      try {
+        fn(id);
+      } catch (err) {
+        // 콜백 실패는 탭 종료 자체를 막지 않는다. 로그만 남김.
+        // eslint-disable-next-line no-console
+        console.error("tab close cleanup failed", err);
+      }
+    }
     set((s) => {
       const idx = s.tabs.findIndex((t) => t.id === id);
       if (idx < 0) return s;
@@ -114,4 +123,11 @@ export function getActiveSession(): Session | null {
 /** Imperative read of the active session_id. */
 export function getActiveSessionId(): string | null {
   return getActiveSession()?.session_id ?? null;
+}
+
+type CloseCleanup = (tabId: TabId) => void;
+const closeCleanups: CloseCleanup[] = [];
+
+export function registerTabCloseCleanup(fn: CloseCleanup): void {
+  closeCleanups.push(fn);
 }

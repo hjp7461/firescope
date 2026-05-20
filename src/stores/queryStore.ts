@@ -9,7 +9,7 @@ import {
   type DraftWhere,
   type QueryDraft,
 } from "@/lib/queryDraft";
-import { useTabsStore, type TabId } from "@/stores/tabsStore";
+import { registerTabCloseCleanup, useTabsStore, type TabId } from "@/stores/tabsStore";
 
 const EMPTY_WHERE: DraftWhere = {
   field: "",
@@ -49,6 +49,7 @@ type QueryState = QueryDraft & {
   /** 히스토리 등에서 받은 완성 드래프트로 교체. */
   hydrate: (d: QueryDraft) => void;
   build: () => BuildResult;
+  dropTab: (tabId: TabId) => void;
 
   __resetForTests: () => void;
 };
@@ -175,6 +176,14 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     });
   },
 
+  dropTab: (tabId) =>
+    set((s) => {
+      if (!s.byTab.has(tabId)) return s;
+      const map = new Map(s.byTab);
+      map.delete(tabId);
+      return { ...s, byTab: map };
+    }),
+
   __resetForTests: () => set({ ...INITIAL_DRAFT, byTab: new Map() }),
 }));
 
@@ -185,6 +194,10 @@ useTabsStore.subscribe((s, prev) => {
     ? useQueryStore.getState().byTab.get(s.activeTabId) ?? INITIAL_DRAFT
     : INITIAL_DRAFT;
   useQueryStore.setState(draft);
+});
+
+registerTabCloseCleanup((tabId) => {
+  useQueryStore.getState().dropTab(tabId);
 });
 
 export const COMPARE_OPS: CompareOp[] = [
