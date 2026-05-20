@@ -4,7 +4,7 @@
 // 일반화된 한국어 안내가 보여야 한다. 자격증명 본문은 백엔드가 이미 마스킹하지만
 // 사용자 입장에서 detail 자체가 도움이 안 되는 경우(특히 internal/io)가 많다.
 
-import { asAppError, type AppError, type AppErrorKind } from "@/types";
+import { asAppError, type AppErrorKind } from "@/types";
 
 const KIND_MESSAGES: Record<AppErrorKind, string> = {
   auth: "인증에 실패했습니다. 자격증명을 확인하세요.",
@@ -29,23 +29,4 @@ const KIND_MESSAGES: Record<AppErrorKind, string> = {
 export function toKoreanMessage(err: unknown): string {
   const e = asAppError(err);
   return KIND_MESSAGES[e.kind] ?? "알 수 없는 오류가 발생했습니다.";
-}
-
-/**
- * toast.error용 페이로드 — title + description 두 줄.
- * 백엔드 detail이 비어있지 않으면 description으로, 비어있으면 title만 표시.
- */
-export function toToastError(err: unknown): { title: string; description?: string } {
-  const e = asAppError(err);
-  const title = KIND_MESSAGES[e.kind] ?? "알 수 없는 오류가 발생했습니다.";
-  const description = describeDetail(e);
-  return description ? { title, description } : { title };
-}
-
-/** 사용자에게 보여줘도 안전한 detail만 반환. 너무 길거나 무의미하면 생략. */
-function describeDetail(e: AppError): string | undefined {
-  if (!e.message || e.message.length === 0) return undefined;
-  // 일반화된 메시지는 description으로도 의미가 약함.
-  if (e.message.length > 240) return e.message.slice(0, 237) + "…";
-  return e.message;
 }
