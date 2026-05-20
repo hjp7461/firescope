@@ -9,8 +9,27 @@ import {
   type DraftWhere,
   type QueryDraft,
 } from "@/lib/queryDraft";
+import { useTabsStore, type TabId } from "@/stores/tabsStore";
+
+const EMPTY_WHERE: DraftWhere = {
+  field: "",
+  op: "==",
+  valueType: "string",
+  raw: "",
+};
+
+const INITIAL_DRAFT: QueryDraft = {
+  targetKind: "collection",
+  target: "",
+  wheres: [],
+  orderBys: [],
+  limit: 100,
+  postFilter: { ...EMPTY_POST_FILTER },
+};
 
 type QueryState = QueryDraft & {
+  byTab: Map<TabId, QueryDraft>;
+
   setTargetKind: (k: QueryDraft["targetKind"]) => void;
   setTarget: (t: string) => void;
   addWhere: () => void;
@@ -30,78 +49,119 @@ type QueryState = QueryDraft & {
   /** 히스토리 등에서 받은 완성 드래프트로 교체. */
   hydrate: (d: QueryDraft) => void;
   build: () => BuildResult;
+
+  __resetForTests: () => void;
 };
 
-const EMPTY_WHERE: DraftWhere = {
-  field: "",
-  op: "==",
-  valueType: "string",
-  raw: "",
-};
+function setSlice(
+  state: QueryState,
+  tabId: TabId,
+  patch: Partial<QueryDraft>,
+): QueryState {
+  const prev = state.byTab.get(tabId) ?? INITIAL_DRAFT;
+  const next: QueryDraft = { ...prev, ...patch };
+  const map = new Map(state.byTab);
+  map.set(tabId, next);
+  const isActive = useTabsStore.getState().activeTabId === tabId;
+  return isActive
+    ? { ...state, ...next, byTab: map }
+    : { ...state, byTab: map };
+}
 
-const initial: QueryDraft = {
-  targetKind: "collection",
-  target: "",
-  wheres: [],
-  orderBys: [],
-  limit: 100,
-  postFilter: { ...EMPTY_POST_FILTER },
-};
+function activeMutate(
+  state: QueryState,
+  fn: (draft: QueryDraft) => Partial<QueryDraft>,
+): QueryState {
+  const tabId = useTabsStore.getState().activeTabId;
+  if (!tabId) return state;
+  const prev = state.byTab.get(tabId) ?? INITIAL_DRAFT;
+  return setSlice(state, tabId, fn(prev));
+}
 
 export const useQueryStore = create<QueryState>((set, get) => ({
-  ...initial,
+  ...INITIAL_DRAFT,
+  byTab: new Map(),
 
-  setTargetKind: (targetKind) => set({ targetKind }),
-  setTarget: (target) => set({ target }),
+  setTargetKind: (targetKind) => set((s) => activeMutate(s, () => ({ targetKind }))),
+  setTarget: (target) => set((s) => activeMutate(s, () => ({ target }))),
 
   addWhere: () =>
-    set((s) => ({ wheres: [...s.wheres, { ...EMPTY_WHERE }] })),
+    set((s) =>
+      activeMutate(s, (d) => ({ wheres: [...d.wheres, { ...EMPTY_WHERE }] })),
+    ),
   updateWhere: (i, patch) =>
-    set((s) => ({
-      wheres: s.wheres.map((w, idx) => (idx === i ? { ...w, ...patch } : w)),
-    })),
+    set((s) =>
+      activeMutate(s, (d) => ({
+        wheres: d.wheres.map((w, idx) => (idx === i ? { ...w, ...patch } : w)),
+      })),
+    ),
   removeWhere: (i) =>
-    set((s) => ({ wheres: s.wheres.filter((_, idx) => idx !== i) })),
+    set((s) =>
+      activeMutate(s, (d) => ({
+        wheres: d.wheres.filter((_, idx) => idx !== i),
+      })),
+    ),
 
   addOrderBy: () =>
-    set((s) => ({
-      orderBys: [...s.orderBys, { field: "", direction: "asc" }],
-    })),
+    set((s) =>
+      activeMutate(s, (d) => ({
+        orderBys: [...d.orderBys, { field: "", direction: "asc" }],
+      })),
+    ),
   updateOrderBy: (i, patch) =>
-    set((s) => ({
-      orderBys: s.orderBys.map((o, idx) =>
-        idx === i ? { ...o, ...patch } : o,
-      ),
-    })),
+    set((s) =>
+      activeMutate(s, (d) => ({
+        orderBys: d.orderBys.map((o, idx) =>
+          idx === i ? { ...o, ...patch } : o,
+        ),
+      })),
+    ),
   removeOrderBy: (i) =>
-    set((s) => ({ orderBys: s.orderBys.filter((_, idx) => idx !== i) })),
+    set((s) =>
+      activeMutate(s, (d) => ({
+        orderBys: d.orderBys.filter((_, idx) => idx !== i),
+      })),
+    ),
 
-  setLimit: (limit) => set({ limit: Number.isFinite(limit) ? limit : 0 }),
+  setLimit: (limit) =>
+    set((s) => activeMutate(s, () => ({ limit: Number.isFinite(limit) ? limit : 0 }))),
 
   updatePostFilter: (patch) =>
-    set((s) => ({ postFilter: { ...s.postFilter, ...patch } })),
+    set((s) =>
+      activeMutate(s, (d) => ({ postFilter: { ...d.postFilter, ...patch } })),
+    ),
 
-  reset: () => set({ ...initial, postFilter: { ...EMPTY_POST_FILTER } }),
+  reset: () =>
+    set((s) =>
+      activeMutate(s, () => ({
+        ...INITIAL_DRAFT,
+        postFilter: { ...EMPTY_POST_FILTER },
+      })),
+    ),
 
   loadFromTarget: (targetKind, target) =>
-    set({
-      targetKind,
-      target,
-      wheres: [],
-      orderBys: [],
-      limit: 100,
-      postFilter: { ...EMPTY_POST_FILTER },
-    }),
+    set((s) =>
+      activeMutate(s, () => ({
+        targetKind,
+        target,
+        wheres: [],
+        orderBys: [],
+        limit: 100,
+        postFilter: { ...EMPTY_POST_FILTER },
+      })),
+    ),
 
   hydrate: (d) =>
-    set({
-      targetKind: d.targetKind,
-      target: d.target,
-      wheres: d.wheres.map((w) => ({ ...w })),
-      orderBys: d.orderBys.map((o) => ({ ...o })),
-      limit: d.limit,
-      postFilter: { ...d.postFilter },
-    }),
+    set((s) =>
+      activeMutate(s, () => ({
+        targetKind: d.targetKind,
+        target: d.target,
+        wheres: d.wheres.map((w) => ({ ...w })),
+        orderBys: d.orderBys.map((o) => ({ ...o })),
+        limit: d.limit,
+        postFilter: { ...d.postFilter },
+      })),
+    ),
 
   build: () => {
     const s = get();
@@ -114,27 +174,24 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       postFilter: s.postFilter,
     });
   },
+
+  __resetForTests: () => set({ ...INITIAL_DRAFT, byTab: new Map() }),
 }));
 
+// 활성 탭 변경 시 top-level 미러 동기화
+useTabsStore.subscribe((s, prev) => {
+  if (s.activeTabId === prev.activeTabId) return;
+  const draft = s.activeTabId
+    ? useQueryStore.getState().byTab.get(s.activeTabId) ?? INITIAL_DRAFT
+    : INITIAL_DRAFT;
+  useQueryStore.setState(draft);
+});
+
 export const COMPARE_OPS: CompareOp[] = [
-  "==",
-  "!=",
-  "<",
-  "<=",
-  ">",
-  ">=",
-  "array_contains",
-  "array_contains_any",
-  "in",
-  "not_in",
+  "==", "!=", "<", "<=", ">", ">=",
+  "array_contains", "array_contains_any", "in", "not_in",
 ];
 
 export const VALUE_TYPES: DraftValueType[] = [
-  "string",
-  "int",
-  "double",
-  "bool",
-  "null",
-  "timestamp",
-  "reference",
+  "string", "int", "double", "bool", "null", "timestamp", "reference",
 ];
