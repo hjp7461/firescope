@@ -137,20 +137,14 @@ impl StreamRegistry {
 
     /// 그 세션이 보유한 모든 스트림을 취소·정리 (다른 세션은 무관).
     pub fn cancel_session(&self, session_id: uuid::Uuid) {
-        let mut guard = self.inner.lock();
-        let to_drop: Vec<String> = guard
-            .iter()
-            .filter(|(_, e)| e.session_id == session_id)
-            .map(|(k, _)| k.clone())
-            .collect();
-        for key in &to_drop {
-            if let Some(entry) = guard.get(key) {
-                entry.cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.inner.lock().retain(|_, e| {
+            if e.session_id == session_id {
+                e.cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+                false // drop the entry → Arc drop → sink unlinks file
+            } else {
+                true
             }
-        }
-        for key in to_drop {
-            guard.remove(&key); // Arc drop → ResultSink unlinks file
-        }
+        });
     }
 
     /// 단일 스트림 등록 해제 + sink 폐기 (사용자가 결과 폐기를 명시할 때).
