@@ -13,12 +13,17 @@ export type AppErrorKind =
   | "credential_invalid"
   | "confirmation_required"
   | "vault_error"
-  | "duplicate_profile";
+  | "duplicate_profile"
+  | "session_not_found"
+  | "session_limit_reached";
 
-export type AppError = {
-  kind: AppErrorKind;
-  message: string;
-};
+export type AppError =
+  | {
+      kind: Exclude<AppErrorKind, "session_not_found" | "session_limit_reached">;
+      message: string;
+    }
+  | { kind: "session_not_found"; session_id: string; message: string }
+  | { kind: "session_limit_reached"; active: number; max: number; message: string };
 
 /** invoke 거부 값을 AppError로 정규화. 알 수 없는 형태는 internal로 감싼다. */
 export function asAppError(err: unknown): AppError {
@@ -28,11 +33,25 @@ export function asAppError(err: unknown): AppError {
     "kind" in err &&
     typeof (err as { kind: unknown }).kind === "string"
   ) {
-    const e = err as { kind: string; message?: unknown };
-    return {
-      kind: e.kind as AppErrorKind,
-      message: typeof e.message === "string" ? e.message : "",
-    };
+    const e = err as Record<string, unknown>;
+    const kind = e.kind as AppErrorKind;
+    const message = typeof e.message === "string" ? e.message : "";
+    if (kind === "session_not_found") {
+      return {
+        kind,
+        message,
+        session_id: typeof e.session_id === "string" ? e.session_id : "",
+      };
+    }
+    if (kind === "session_limit_reached") {
+      return {
+        kind,
+        message,
+        active: typeof e.active === "number" ? e.active : 0,
+        max: typeof e.max === "number" ? e.max : 0,
+      };
+    }
+    return { kind, message };
   }
   return {
     kind: "internal",

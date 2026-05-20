@@ -109,6 +109,7 @@ export type QueryHistoryEntry = {
 
 /** query:error 페이로드 — AppError + 옵션 index_url (Phase 8-A). */
 export type QueryErrorPayload = {
+  session_id: string;
   kind: string;
   message: string;
   /** Firestore가 누락 인덱스 에러에 포함시킨 콘솔 URL. 있으면 클릭 링크로 노출. */
@@ -116,8 +117,13 @@ export type QueryErrorPayload = {
 };
 
 // query_documents 이벤트 페이로드 (`query:chunk|done|error:<stream_id>`).
-export type QueryChunk = { docs: FirestoreDocument[]; page: number };
+export type QueryChunk = {
+  session_id: string;
+  docs: FirestoreDocument[];
+  page: number;
+};
 export type QueryDone = {
+  session_id: string;
   /** post_filter 통과(매칭) 건수 = 수신한 chunk 합계. */
   total: number;
   /** Firestore에서 가져온 전체 건수 (post_filter 없으면 total과 동일). */
