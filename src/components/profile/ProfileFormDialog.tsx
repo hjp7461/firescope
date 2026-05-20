@@ -48,6 +48,7 @@ export function ProfileFormDialog({ open, onOpenChange, initial }: Props) {
   const [mode, setMode] = useState<ProfileMode>("emulator");
   const [color, setColor] = useState("#3b82f6");
   const [tags, setTags] = useState("");
+  const [group, setGroup] = useState("");
   const [firestoreHost, setFirestoreHost] = useState("");
   const [requireConfirmation, setRequireConfirmation] = useState(false);
   const [saJson, setSaJson] = useState("");
@@ -63,6 +64,7 @@ export function ProfileFormDialog({ open, onOpenChange, initial }: Props) {
     setMode(initial?.mode ?? "emulator");
     setColor(initial?.color ?? "#3b82f6");
     setTags(initial?.tags?.join(", ") ?? "");
+    setGroup(initial?.group ?? "");
     setFirestoreHost(initial?.firestore_host ?? "");
     setRequireConfirmation(initial?.require_confirmation ?? false);
     setSaJson("");
@@ -84,6 +86,7 @@ export function ProfileFormDialog({ open, onOpenChange, initial }: Props) {
           name,
           color,
           tags: tagList,
+          group,
           firestore_host: firestoreHost || undefined,
           require_confirmation: requireConfirmation,
         });
@@ -95,6 +98,7 @@ export function ProfileFormDialog({ open, onOpenChange, initial }: Props) {
           mode,
           color,
           tags: tagList,
+          group: group || undefined,
           firestore_host: mode === "emulator" ? firestoreHost || undefined : undefined,
           require_confirmation: requireConfirmation,
         });
@@ -200,14 +204,25 @@ export function ProfileFormDialog({ open, onOpenChange, initial }: Props) {
                 />
               </div>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="pf-tags">태그 (쉼표 구분)</Label>
-              <Input
-                id="pf-tags"
-                value={tags}
-                onChange={(e) => setTags(e.target.value)}
-                placeholder="prod, main"
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="pf-tags">태그 (쉼표 구분)</Label>
+                <Input
+                  id="pf-tags"
+                  value={tags}
+                  onChange={(e) => setTags(e.target.value)}
+                  placeholder="prod, main"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="pf-group">그룹/폴더 (선택)</Label>
+                <Input
+                  id="pf-group"
+                  value={group}
+                  onChange={(e) => setGroup(e.target.value)}
+                  placeholder="운영"
+                />
+              </div>
             </div>
             {mode === "emulator" && (
               <div className="space-y-1.5">

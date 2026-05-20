@@ -276,3 +276,13 @@ pub fn clear_query_history(
 ) -> AppResult<()> {
     state.history.clear(profile_id)
 }
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn pin_query_history(
+    state: State<'_, AppState>,
+    profile_id: Uuid,
+    entry_id: Uuid,
+    pinned: bool,
+) -> AppResult<HistoryEntry> {
+    state.history.pin(profile_id, entry_id, pinned)
+}

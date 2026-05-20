@@ -1,4 +1,5 @@
-import { Clock, Trash2, X } from "lucide-react";
+import type * as React from "react";
+import { Clock, Star, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -23,14 +24,24 @@ function summarize(dsl: QueryDsl): string {
   return parts.join(" · ") || "조건 없음";
 }
 
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="px-2 pt-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+      {children}
+    </div>
+  );
+}
+
 function HistoryItem({
   entry,
   onReplay,
   onRemove,
+  onTogglePin,
 }: {
   entry: QueryHistoryEntry;
   onReplay: () => void;
   onRemove: () => void;
+  onTogglePin: () => void;
 }) {
   const when = new Date(entry.executed_at).toLocaleString();
   const meta = [
@@ -42,6 +53,24 @@ function HistoryItem({
 
   return (
     <div className="group flex items-start gap-1.5 rounded-md px-2 py-1.5 hover:bg-accent/50">
+      <Button
+        type="button"
+        size="icon"
+        variant="ghost"
+        className="size-6 shrink-0"
+        onClick={onTogglePin}
+        aria-label={entry.pinned ? "핀 해제" : "핀 고정"}
+        title={entry.pinned ? "핀 해제" : "핀 고정 (100개 캡에서 제외)"}
+      >
+        <Star
+          className={cn(
+            "size-3.5",
+            entry.pinned
+              ? "fill-amber-400 text-amber-500"
+              : "text-muted-foreground/40",
+          )}
+        />
+      </Button>
       <button
         type="button"
         onClick={onReplay}
@@ -79,7 +108,11 @@ export function HistoryPanel() {
   const profileId = useHistoryStore((s) => s.profileId);
   const remove = useHistoryStore((s) => s.remove);
   const clear = useHistoryStore((s) => s.clear);
+  const togglePin = useHistoryStore((s) => s.togglePin);
   const runDsl = useResultStore((s) => s.runDsl);
+
+  const pinned = entries.filter((e) => e.pinned);
+  const recent = entries.filter((e) => !e.pinned);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -117,18 +150,48 @@ export function HistoryPanel() {
               아직 실행한 쿼리가 없습니다
             </p>
           ) : (
-            entries.map((e) => (
-              <HistoryItem
-                key={e.id}
-                entry={e}
-                onReplay={() => void runDsl(e.dsl)}
-                onRemove={() => {
-                  void remove(e.id).catch((err) =>
-                    toast.error(toKoreanMessage(err)),
-                  );
-                }}
-              />
-            ))
+            <>
+              {pinned.length > 0 && (
+                <>
+                  <SectionLabel>북마크 ({pinned.length})</SectionLabel>
+                  {pinned.map((e) => (
+                    <HistoryItem
+                      key={e.id}
+                      entry={e}
+                      onReplay={() => void runDsl(e.dsl)}
+                      onRemove={() => {
+                        void remove(e.id).catch((err) =>
+                          toast.error(toKoreanMessage(err)),
+                        );
+                      }}
+                      onTogglePin={() => {
+                        void togglePin(e.id, !e.pinned).catch((err) =>
+                          toast.error(toKoreanMessage(err)),
+                        );
+                      }}
+                    />
+                  ))}
+                  <SectionLabel>최근 ({recent.length})</SectionLabel>
+                </>
+              )}
+              {recent.map((e) => (
+                <HistoryItem
+                  key={e.id}
+                  entry={e}
+                  onReplay={() => void runDsl(e.dsl)}
+                  onRemove={() => {
+                    void remove(e.id).catch((err) =>
+                      toast.error(toKoreanMessage(err)),
+                    );
+                  }}
+                  onTogglePin={() => {
+                    void togglePin(e.id, !e.pinned).catch((err) =>
+                      toast.error(toKoreanMessage(err)),
+                    );
+                  }}
+                />
+              ))}
+            </>
           )}
         </div>
       </ScrollArea>

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Calculator, ClipboardCopy, Download, SlidersHorizontal } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,6 +40,7 @@ export function ResultBar({
   const scanned = useResultStore((s) => s.scanned);
   const tookMs = useResultStore((s) => s.tookMs);
   const error = useResultStore((s) => s.error);
+  const indexUrl = useResultStore((s) => s.indexUrl);
   const cancel = useResultStore((s) => s.cancel);
   const streamId = useResultStore((s) => s.streamId);
   const lastDsl = useResultStore((s) => s.lastDsl);
@@ -229,7 +231,19 @@ export function ResultBar({
           </>
         )}
         {status === "error" && (
-          <span className="text-destructive">{error}</span>
+          <span className="flex items-center gap-2 text-destructive">
+            {error}
+            {indexUrl && (
+              <button
+                type="button"
+                onClick={() => void openUrl(indexUrl)}
+                className="rounded border border-destructive/40 px-1.5 py-0.5 text-[10px] font-medium hover:bg-destructive/10"
+                title={`Firebase 콘솔에서 누락된 인덱스 생성: ${indexUrl}`}
+              >
+                인덱스 생성 ↗
+              </button>
+            )}
+          </span>
         )}
       </span>
     </div>

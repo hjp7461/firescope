@@ -59,3 +59,14 @@ export const removeQueryHistory = (profileId: string, entryId: string) =>
 
 export const clearQueryHistory = (profileId: string) =>
   call<void>("clear_query_history", { profile_id: profileId });
+
+export const pinQueryHistory = (
+  profileId: string,
+  entryId: string,
+  pinned: boolean,
+) =>
+  call<QueryHistoryEntry>("pin_query_history", {
+    profile_id: profileId,
+    entry_id: entryId,
+    pinned,
+  });

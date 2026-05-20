@@ -37,6 +37,9 @@ pub struct Profile {
     pub color: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    /// 사이드바 분류용 그룹/폴더 (Phase 8-C). 자유 문자열.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub firestore_host: Option<String>,
@@ -71,6 +74,7 @@ impl Profile {
             mode: self.mode,
             color: self.color.clone(),
             tags: self.tags.clone(),
+            group: self.group.clone(),
             firestore_host: self.firestore_host.clone(),
             auth_host: self.auth_host.clone(),
             require_confirmation: self.require_confirmation,
@@ -94,6 +98,8 @@ pub struct ProfileMeta {
     pub mode: ProfileMode,
     pub color: Option<String>,
     pub tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     pub firestore_host: Option<String>,
     pub auth_host: Option<String>,
     pub require_confirmation: bool,
@@ -132,6 +138,7 @@ pub struct CreateProfileParams {
     pub mode: ProfileMode,
     pub color: Option<String>,
     pub tags: Option<Vec<String>>,
+    pub group: Option<String>,
     pub firestore_host: Option<String>,
     pub auth_host: Option<String>,
     pub require_confirmation: Option<bool>,
@@ -146,6 +153,7 @@ pub struct UpdateProfileParams {
     pub description: Option<String>,
     pub color: Option<String>,
     pub tags: Option<Vec<String>>,
+    pub group: Option<String>,
     pub firestore_host: Option<String>,
     pub auth_host: Option<String>,
     pub require_confirmation: Option<bool>,

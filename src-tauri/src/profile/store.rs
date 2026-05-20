@@ -129,6 +129,7 @@ impl ProfileManager {
             mode: params.mode,
             color: params.color,
             tags: params.tags.unwrap_or_default(),
+            group: params.group.and_then(non_empty),
             firestore_host: params.firestore_host,
             auth_host: params.auth_host,
             require_confirmation: params.require_confirmation.unwrap_or(looks_prod),
@@ -169,6 +170,10 @@ impl ProfileManager {
             }
             if let Some(v) = params.tags {
                 profile.tags = v;
+            }
+            if let Some(v) = params.group {
+                // 빈 문자열은 "그룹 없음"으로 명시적 해제.
+                profile.group = non_empty(v);
             }
             if let Some(v) = params.firestore_host {
                 profile.firestore_host = Some(v);
@@ -266,6 +271,16 @@ fn project_id_looks_production(project_id: &str) -> bool {
     project_id.to_lowercase().contains("prod")
 }
 
+/// 공백 trim 후 빈 문자열은 None — 그룹 입력 처리용 (Phase 8-C).
+fn non_empty(s: String) -> Option<String> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,6 +304,7 @@ mod tests {
             mode,
             color: None,
             tags: None,
+            group: None,
             firestore_host: None,
             auth_host: None,
             require_confirmation: None,
