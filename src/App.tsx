@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { ProfileSidebar } from "@/components/profile/ProfileSidebar";
@@ -63,16 +63,7 @@ function App() {
     void useHistoryStore.getState().load(session?.profile_id ?? null);
   }, [session?.profile_id]);
 
-  // 글로벌 단축키 (Phase 6-F). 콜백을 ref로 받아 매번 새 클로저를 캡처하면서도
-  // keydown 리스너는 한 번만 bind한다 (마운트/언마운트 비용 절감).
-  const onSelectProfileRef = useRef<(idx: number) => void>(() => {});
-  onSelectProfileRef.current = (idx: number) => {
-    const list = useProfileStore.getState().profiles;
-    const p = list[idx];
-    if (!p) return;
-    if (p.require_confirmation) setPendingProd(p);
-    else void doActivate(p, false);
-  };
+  // 글로벌 단축키. 핸들러 내에서 getState()로 매번 최신 상태를 읽으므로 ref 불필요.
   useEffect(() => {
     return bindGlobalHotkeys({
       onRun: () => {
@@ -88,7 +79,32 @@ function App() {
           void useResultStore.getState().cancel();
         }
       },
-      onSelectProfile: (idx) => onSelectProfileRef.current(idx),
+      onSelectTab: (idx) => {
+        const tabs = useTabsStore.getState().tabs;
+        const target = tabs[idx];
+        if (target) useTabsStore.getState().focus(target.id);
+      },
+      onNewTab: () => {
+        useTabsStore.getState().add();
+      },
+      onCloseTab: () => {
+        const { activeTabId } = useTabsStore.getState();
+        if (activeTabId) useTabsStore.getState().close(activeTabId);
+      },
+      onNextTab: () => {
+        const { tabs, activeTabId } = useTabsStore.getState();
+        if (tabs.length < 2) return;
+        const i = tabs.findIndex((t) => t.id === activeTabId);
+        const next = tabs[(i + 1) % tabs.length];
+        useTabsStore.getState().focus(next.id);
+      },
+      onPrevTab: () => {
+        const { tabs, activeTabId } = useTabsStore.getState();
+        if (tabs.length < 2) return;
+        const i = tabs.findIndex((t) => t.id === activeTabId);
+        const prev = tabs[(i - 1 + tabs.length) % tabs.length];
+        useTabsStore.getState().focus(prev.id);
+      },
     });
   }, []);
 
