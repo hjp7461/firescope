@@ -6,3 +6,4 @@
 pub mod profile;
 pub mod query;
 pub mod session;
+pub mod tabs;
