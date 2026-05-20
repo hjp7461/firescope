@@ -56,8 +56,14 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
-                let state: tauri::State<crate::state::AppState> = window.state();
-                state.sessions.deactivate_all(window.app_handle());
+                let app = window.app_handle().clone();
+                // deactivate_all은 listener shutdown(async)을 포함하므로
+                // tauri의 async runtime에서 블로킹 실행한다. 프로세스 종료
+                // 직전이라 짧은 cleanup만 일어난다.
+                tauri::async_runtime::block_on(async move {
+                    let state: tauri::State<crate::state::AppState> = app.state();
+                    state.sessions.deactivate_all(&app).await;
+                });
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -90,6 +96,9 @@ pub fn run() {
             commands::query::clear_query_history,
             commands::query::pin_query_history,
             commands::query::compute_stats,
+            commands::listener::start_listener,
+            commands::listener::stop_listener,
+            commands::listener::list_listeners,
             commands::tabs::list_tabs,
             commands::tabs::save_tabs,
         ])

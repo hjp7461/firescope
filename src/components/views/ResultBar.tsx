@@ -4,6 +4,7 @@ import {
   Calculator,
   ClipboardCopy,
   Download,
+  Radio,
   SlidersHorizontal,
 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -51,6 +52,11 @@ export function ResultBar({
   const cancel = useResultStore((s) => s.cancel);
   const streamId = useResultStore((s) => s.streamId);
   const lastDsl = useResultStore((s) => s.lastDsl);
+  const listenerId = useResultStore((s) => s.listenerId);
+  const listenerStatus = useResultStore((s) => s.listenerStatus);
+  const listenerEventCount = useResultStore((s) => s.listenerEventCount);
+  const startListening = useResultStore((s) => s.startListening);
+  const stopListening = useResultStore((s) => s.stopListening);
   const activeView = useViewStore((s) => s.activeView);
   const hasPostFilter = lastDsl?.post_filter != null;
   // Log 뷰는 자체 [복사] 버튼이 헤더에 있으므로 ResultBar의 결과 액션을 숨긴다
@@ -120,6 +126,29 @@ export function ResultBar({
   const canCopy = status === "done" && rows > 0;
   const canCount = status === "done" && lastDsl != null;
   const canStats = status === "done" && streamId != null && rows > 0;
+  const isListening = listenerId != null;
+  const canToggleListener = isListening || (lastDsl != null && lastDsl.target != null);
+
+  const toggleListener = async () => {
+    if (isListening) {
+      try {
+        await stopListening();
+      } catch (err) {
+        toast.error(toKoreanMessage(err));
+      }
+      return;
+    }
+    if (!lastDsl) return;
+    try {
+      // listener는 DSL 서브셋만 사용 — order_by/limit/select/cursor/post_filter는 무시.
+      await startListening({
+        target: lastDsl.target,
+        where: lastDsl.where,
+      });
+    } catch (err) {
+      toast.error(toKoreanMessage(err));
+    }
+  };
 
   return (
     <div className="flex items-center gap-3 border-b px-3 py-1.5 text-xs">
@@ -145,6 +174,45 @@ export function ResultBar({
         </span>
       )}
       <span className="ml-auto flex items-center gap-3">
+        {showResultActions && canToggleListener && (
+          <Button
+            type="button"
+            size="sm"
+            variant={isListening ? "secondary" : "ghost"}
+            className="h-7 gap-1.5 px-2 text-xs"
+            aria-pressed={isListening}
+            onClick={() => void toggleListener()}
+            title={
+              isListening
+                ? "Live 모드 종료 (스냅샷으로 복귀)"
+                : "Realtime 리스너 시작 — 결과집합이 실시간 갱신됩니다"
+            }
+          >
+            <Radio
+              className={`size-3.5 ${isListening ? "animate-pulse text-red-500" : ""}`}
+            />
+            Live
+          </Button>
+        )}
+        {status === "listening" && (
+          <span className="flex items-center gap-1 text-muted-foreground">
+            <span
+              className={`inline-block size-1.5 rounded-full ${
+                listenerStatus === "ready"
+                  ? "bg-green-500"
+                  : listenerStatus === "reset"
+                    ? "bg-amber-500"
+                    : "bg-muted-foreground animate-pulse"
+              }`}
+            />
+            <span>
+              Live · {rows}건
+              {listenerEventCount > 0
+                ? ` · ${listenerEventCount}회 변경`
+                : ""}
+            </span>
+          </span>
+        )}
         {status === "streaming" && (
           <>
             <span className="text-muted-foreground">

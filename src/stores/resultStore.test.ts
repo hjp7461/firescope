@@ -32,6 +32,9 @@ describe("resultStore byTab", () => {
       tookMs: 10,
       error: null,
       indexUrl: null,
+      listenerId: null,
+      listenerStatus: null,
+      listenerEventCount: 0,
     });
     const s = useResultStore.getState();
     expect(s.rows.length).toBe(1);
@@ -53,6 +56,9 @@ describe("resultStore byTab", () => {
       tookMs: 10,
       error: null,
       indexUrl: null,
+      listenerId: null,
+      listenerStatus: null,
+      listenerEventCount: 0,
     });
     const s = useResultStore.getState();
     expect(s.rows).toEqual([]); // tab B (active) is empty

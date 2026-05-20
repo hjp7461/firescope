@@ -1,10 +1,14 @@
 import { create } from "zustand";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { cancelStream, queryDocuments } from "@/ipc/query";
+import { startListener, stopListener } from "@/ipc/listener";
 import { getActiveSession, registerTabCloseCleanup, useTabsStore, type TabId } from "@/stores/tabsStore";
 import { useHistoryStore } from "@/stores/historyStore";
 import {
   type FirestoreDocument,
+  type ListenerChangePayload,
+  type ListenerDsl,
+  type ListenerStatusPayload,
   type QueryChunk,
   type QueryDone,
   type QueryDsl,
@@ -12,7 +16,8 @@ import {
 } from "@/types";
 import { toKoreanMessage } from "@/lib/errorMessages";
 
-type Status = "idle" | "streaming" | "done" | "error";
+type Status = "idle" | "streaming" | "done" | "error" | "listening";
+type ListenerStatus = "initial" | "ready" | "reset";
 
 export type ResultSlice = {
   streamId: string | null;
@@ -25,6 +30,12 @@ export type ResultSlice = {
   tookMs: number | null;
   error: string | null;
   indexUrl: string | null;
+  /** 활성 listener id. 없으면 null (= 스냅샷 모드). */
+  listenerId: string | null;
+  /** 마지막 `listener:status` 이벤트 — `null`이면 listener 비활성. */
+  listenerStatus: ListenerStatus | null;
+  /** listener 모드에서 누적된 변경 이벤트 수. */
+  listenerEventCount: number;
 };
 
 const EMPTY_SLICE: ResultSlice = {
@@ -38,6 +49,9 @@ const EMPTY_SLICE: ResultSlice = {
   tookMs: null,
   error: null,
   indexUrl: null,
+  listenerId: null,
+  listenerStatus: null,
+  listenerEventCount: 0,
 };
 
 type ResultState = ResultSlice & {
@@ -47,6 +61,11 @@ type ResultState = ResultSlice & {
   cancel: () => Promise<void>;
   reset: () => void;
   dropTab: (tabId: TabId) => void;
+
+  /** Realtime listener를 시작한다 (Phase 11). 기존 스트림/listener는 정리. */
+  startListening: (dsl: ListenerDsl) => Promise<void>;
+  /** 활성 listener를 중지하고 스냅샷 모드로 복귀한다. */
+  stopListening: () => Promise<void>;
 
   __resetForTests: () => void;
   __setSliceForTest: (tabId: TabId, slice: ResultSlice) => void;
@@ -73,6 +92,17 @@ async function teardownStream(streamId: string) {
   await Promise.all(fns.map((f) => f()));
 }
 
+// Realtime listener — listener-id별 unlisten 추적 (스트림과 분리).
+const listenerIdToTab = new Map<string, TabId>();
+const listenerUnlisteners = new Map<string, UnlistenFn[]>();
+
+async function teardownListener(listenerId: string) {
+  const fns = listenerUnlisteners.get(listenerId) ?? [];
+  listenerUnlisteners.delete(listenerId);
+  listenerIdToTab.delete(listenerId);
+  await Promise.all(fns.map((f) => f()));
+}
+
 function setSlice(
   state: ResultState,
   tabId: TabId,
@@ -95,16 +125,24 @@ export const useResultStore = create<ResultState>((set, get) => ({
   reset: () => {
     const tabId = useTabsStore.getState().activeTabId;
     if (!tabId) return;
-    const sid = get().byTab.get(tabId)?.streamId;
-    if (sid) void teardownStream(sid);
+    const slice = get().byTab.get(tabId);
+    if (slice?.streamId) void teardownStream(slice.streamId);
+    if (slice?.listenerId) {
+      void stopListener(slice.listenerId).catch(() => undefined);
+      void teardownListener(slice.listenerId);
+    }
     set((s) => setSlice(s, tabId, { ...EMPTY_SLICE }));
   },
 
   runDsl: async (dsl) => {
     const tabId = useTabsStore.getState().activeTabId;
     if (!tabId) return;
-    const prevStreamId = get().byTab.get(tabId)?.streamId;
-    if (prevStreamId) await teardownStream(prevStreamId);
+    const prev = get().byTab.get(tabId);
+    if (prev?.streamId) await teardownStream(prev.streamId);
+    if (prev?.listenerId) {
+      await stopListener(prev.listenerId).catch(() => undefined);
+      await teardownListener(prev.listenerId);
+    }
 
     const streamId = crypto.randomUUID();
     streamIdToTab.set(streamId, tabId);
@@ -120,6 +158,9 @@ export const useResultStore = create<ResultState>((set, get) => ({
         tookMs: null,
         error: null,
         indexUrl: null,
+        listenerId: null,
+        listenerStatus: null,
+        listenerEventCount: 0,
       }),
     );
 
@@ -195,12 +236,20 @@ export const useResultStore = create<ResultState>((set, get) => ({
   },
 
   dropTab: (tabId) => {
-    const owned: string[] = [];
+    const ownedStreams: string[] = [];
     for (const [streamId, owner] of streamIdToTab.entries()) {
-      if (owner === tabId) owned.push(streamId);
+      if (owner === tabId) ownedStreams.push(streamId);
     }
-    for (const streamId of owned) {
+    for (const streamId of ownedStreams) {
       void teardownStream(streamId);
+    }
+    const ownedListeners: string[] = [];
+    for (const [listenerId, owner] of listenerIdToTab.entries()) {
+      if (owner === tabId) ownedListeners.push(listenerId);
+    }
+    for (const listenerId of ownedListeners) {
+      void stopListener(listenerId).catch(() => undefined);
+      void teardownListener(listenerId);
     }
     set((s) => {
       if (!s.byTab.has(tabId)) return s;
@@ -210,9 +259,119 @@ export const useResultStore = create<ResultState>((set, get) => ({
     });
   },
 
+  startListening: async (dsl) => {
+    const tabId = useTabsStore.getState().activeTabId;
+    if (!tabId) return;
+
+    // 1) 기존 스트림/listener 정리.
+    const prev = get().byTab.get(tabId);
+    if (prev?.streamId) await teardownStream(prev.streamId);
+    if (prev?.listenerId) {
+      await stopListener(prev.listenerId).catch(() => undefined);
+      await teardownListener(prev.listenerId);
+    }
+
+    // 2) 새 listener id 생성 + 슬라이스 초기화.
+    const listenerId = crypto.randomUUID();
+    listenerIdToTab.set(listenerId, tabId);
+    const label =
+      dsl.target.kind === "collection" ? dsl.target.path : `group:${dsl.target.id}`;
+    set((s) =>
+      setSlice(s, tabId, {
+        streamId: null,
+        collectionPath: label,
+        lastDsl: null,
+        rows: [],
+        status: "listening",
+        total: 0,
+        scanned: 0,
+        tookMs: null,
+        error: null,
+        indexUrl: null,
+        listenerId,
+        listenerStatus: "initial",
+        listenerEventCount: 0,
+      }),
+    );
+
+    // 3) 이벤트 구독 — start_listener 호출 전에 걸어 첫 스냅샷 유실 방지.
+    const unlisten = await Promise.all([
+      listen<ListenerChangePayload>(`listener:change:${listenerId}`, (e) => {
+        const owner = listenerIdToTab.get(listenerId);
+        if (!owner) return;
+        const slice = get().byTab.get(owner);
+        if (!slice) return;
+        const { kind, doc } = e.payload;
+        // path 기반 upsert / remove. path는 안정적인 키.
+        let rows = slice.rows;
+        if (kind === "removed") {
+          rows = rows.filter((r) => r.path !== doc.path);
+        } else {
+          const idx = rows.findIndex((r) => r.path === doc.path);
+          rows = idx >= 0
+            ? rows.map((r, i) => (i === idx ? doc : r))
+            : [...rows, doc];
+        }
+        set((s) =>
+          setSlice(s, owner, {
+            rows,
+            total: rows.length,
+            scanned: rows.length,
+            listenerEventCount: slice.listenerEventCount + 1,
+          }),
+        );
+      }),
+      listen<ListenerStatusPayload>(`listener:status:${listenerId}`, (e) => {
+        const owner = listenerIdToTab.get(listenerId);
+        if (!owner) return;
+        set((s) =>
+          setSlice(s, owner, { listenerStatus: e.payload.status }),
+        );
+      }),
+    ]);
+    listenerUnlisteners.set(listenerId, unlisten);
+
+    // 4) IPC 호출. 실패 시 슬라이스를 에러 상태로 되돌리고 unlisten.
+    try {
+      await startListener(listenerId, dsl);
+    } catch (err) {
+      await teardownListener(listenerId);
+      set((s) =>
+        setSlice(s, tabId, {
+          status: "error",
+          error: toKoreanMessage(err),
+          listenerId: null,
+          listenerStatus: null,
+        }),
+      );
+    }
+  },
+
+  stopListening: async () => {
+    const tabId = useTabsStore.getState().activeTabId;
+    if (!tabId) return;
+    const slice = get().byTab.get(tabId);
+    const listenerId = slice?.listenerId;
+    if (!listenerId) return;
+    try {
+      await stopListener(listenerId);
+    } finally {
+      await teardownListener(listenerId);
+      set((s) =>
+        setSlice(s, tabId, {
+          status: "done",
+          listenerId: null,
+          listenerStatus: null,
+        }),
+      );
+    }
+  },
+
   __resetForTests: () => {
     streamIdToTab.clear();
     unlisteners.clear();
+    listenerIdToTab.clear();
+    listenerUnlisteners.clear();
     set({ ...EMPTY_SLICE, byTab: new Map() });
   },
   __setSliceForTest: (tabId, slice) => {

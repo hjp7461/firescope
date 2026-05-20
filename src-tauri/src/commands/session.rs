@@ -54,12 +54,12 @@ pub fn list_sessions(state: State<'_, AppState>) -> AppResult<Vec<Session>> {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn deactivate(
+pub async fn deactivate(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: Uuid,
 ) -> AppResult<()> {
-    state.sessions.deactivate(&app, session_id)
+    state.sessions.deactivate(&app, session_id).await
 }
 
 #[tauri::command(rename_all = "snake_case")]

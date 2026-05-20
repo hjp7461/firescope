@@ -31,6 +31,9 @@ describe("tabsStore close → store cleanup", () => {
       tookMs: 0,
       error: null,
       indexUrl: null,
+      listenerId: null,
+      listenerStatus: null,
+      listenerEventCount: 0,
     });
     expect(useResultStore.getState().byTab.has(b)).toBe(true);
     useTabsStore.getState().close(b);
@@ -75,6 +78,9 @@ describe("tabsStore close → store cleanup", () => {
       tookMs: null,
       error: null,
       indexUrl: null,
+      listenerId: null,
+      listenerStatus: null,
+      listenerEventCount: 0,
     });
     expect(useResultStore.getState().byTab.has(a)).toBe(true);
     useTabsStore.getState().close(a);

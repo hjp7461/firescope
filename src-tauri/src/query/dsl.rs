@@ -180,3 +180,32 @@ pub struct QueryDsl {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub post_filter: Option<PostFilter>,
 }
+
+/// Realtime 리스너용 DSL 서브셋 (Phase 11, `docs/03-ipc-contract.md` v0.10).
+///
+/// `QueryDsl`에서 `order_by`/`limit`/`select`/`cursor`/`post_filter`를
+/// 제외한 형태. listener는 결과집합 전체를 스트리밍하므로 페이지네이션
+/// 의미가 다르고, 후처리는 비용을 들이지 않는다.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListenerDsl {
+    pub target: QueryTarget,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub r#where: Vec<WhereClause>,
+}
+
+impl ListenerDsl {
+    /// `validate`/`translate`가 받는 `QueryDsl`로 승격 — 다른 필드는 비어
+    /// 있어 listener의 의미를 변경하지 않는다.
+    pub fn to_query_dsl(&self) -> QueryDsl {
+        QueryDsl {
+            target: self.target.clone(),
+            r#where: self.r#where.clone(),
+            order_by: Vec::new(),
+            limit: None,
+            start_after: None,
+            end_before: None,
+            select: Vec::new(),
+            post_filter: None,
+        }
+    }
+}

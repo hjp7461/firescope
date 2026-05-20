@@ -19,7 +19,7 @@ const SESSION_SOFT_CAP: usize = 10;
 use crate::adapters::TauriTokenSink;
 use crate::auth::{AuthHandle, EmulatorAuth, IdTokenAuth, ServiceAccountAuth};
 use crate::error::{AppError, AppResult};
-use crate::firestore::{FirestoreClient, ResultSink};
+use crate::firestore::{FirestoreClient, ListenerRegistry, ResultSink};
 use crate::profile::store::ProfileManager;
 use crate::profile::{Credential, Profile, ProfileMode};
 use crate::query::history::QueryHistoryManager;
@@ -349,6 +349,7 @@ impl ActiveSession {
 pub struct SessionManager {
     pub(super) sessions: RwLock<std::collections::HashMap<Uuid, ActiveSession>>,
     streams: Arc<StreamRegistry>,
+    listeners: Arc<ListenerRegistry>,
 }
 
 impl SessionManager {
@@ -356,11 +357,16 @@ impl SessionManager {
         Self {
             sessions: RwLock::new(std::collections::HashMap::new()),
             streams: Arc::new(StreamRegistry::new()),
+            listeners: Arc::new(ListenerRegistry::new()),
         }
     }
 
     pub fn streams(&self) -> &Arc<StreamRegistry> {
         &self.streams
+    }
+
+    pub fn listeners(&self) -> &Arc<ListenerRegistry> {
+        &self.listeners
     }
 
     /// 현재 활성 세션 수.
@@ -473,9 +479,10 @@ impl SessionManager {
             .await?;
         let firestore = FirestoreClient::connect(&profile, credential.as_ref()).await?;
 
-        // 3) 교체 대상이 있으면 그 세션의 스트림만 정리.
+        // 3) 교체 대상이 있으면 그 세션의 스트림과 listener를 정리.
         if let Some(existing) = session_id {
             self.streams.cancel_session(existing);
+            self.listeners.shutdown_session(existing).await;
             if let Some(prev) = self.remove_session(existing) {
                 let prev_profile_id = prev.profile.id;
                 drop(prev);
@@ -523,14 +530,16 @@ impl SessionManager {
         Ok(dto)
     }
 
-    /// 지정 세션을 종료한다. 그 세션이 가진 진행 중 스트림만 취소된다.
-    /// 다른 세션 / 알 수 없는 세션 id에 대해서는 idempotent.
-    pub fn deactivate<R: Runtime>(
+    /// 지정 세션을 종료한다. 그 세션이 가진 진행 중 스트림과 realtime
+    /// listener가 모두 정리된다. 다른 세션 / 알 수 없는 세션 id에 대해서는
+    /// idempotent.
+    pub async fn deactivate<R: Runtime>(
         &self,
         app: &tauri::AppHandle<R>,
         session_id: Uuid,
     ) -> AppResult<()> {
         self.streams.cancel_session(session_id);
+        self.listeners.shutdown_session(session_id).await;
         if let Some(prev) = self.remove_session(session_id) {
             let profile_id = prev.profile.id;
             drop(prev);
@@ -553,7 +562,7 @@ impl SessionManager {
 
     /// 모든 활성 세션을 종료한다. 윈도우 종료 / 앱 종료 직전에 호출.
     /// 각 세션마다 `profile:deactivated` 이벤트가 발행된다.
-    pub fn deactivate_all<R: Runtime>(&self, app: &tauri::AppHandle<R>) {
+    pub async fn deactivate_all<R: Runtime>(&self, app: &tauri::AppHandle<R>) {
         // 이벤트를 세션별로 발행하기 위해 drain.
         let drained: Vec<(Uuid, Uuid)> = {
             let mut guard = self.sessions.write();
@@ -563,6 +572,7 @@ impl SessionManager {
                 .collect()
         };
         self.streams.cancel_all();
+        self.listeners.shutdown_all().await;
         for (sid, pid) in drained {
             tracing::info!(
                 target: "session",

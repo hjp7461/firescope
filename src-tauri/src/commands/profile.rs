@@ -122,7 +122,7 @@ pub fn update_profile(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn delete_profile(
+pub async fn delete_profile(
     app: AppHandle,
     state: State<'_, AppState>,
     profile_id: Uuid,
@@ -139,7 +139,7 @@ pub fn delete_profile(
         .map(|s| s.session_id)
         .collect();
     for sid in active_sessions {
-        state.sessions.deactivate(&app, sid)?;
+        state.sessions.deactivate(&app, sid).await?;
     }
     state.profiles.delete(profile_id)?;
     // 프로파일에 종속된 로컬 데이터(쿼리 히스토리)도 함께 정리 (orphan 방지).
