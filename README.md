@@ -16,6 +16,9 @@ UX는 [Firefoo](https://www.firefoo.com/)를 참고했습니다.
 - 📊 **4가지 결과 뷰** — Table / Tree / JSON / Log
 - 🔍 **Firefoo 스타일 쿼리 빌더** — where 조합, orderBy, 커서, 정규식 후처리
 - 💾 **Export** — JSON / NDJSON / CSV, post_filter 적용 시 matched/scanned 분리
+- 📈 **컬렉션 통계** — 샘플(100/500/1000)에서 필드별 type 분포·NULL 비율·상위 값
+- 🔗 **누락 인덱스 가이드** — Firestore 인덱스 에러 발생 시 Firebase 콘솔 링크 자동 추출
+- ⭐ **저장된 쿼리** — 프로파일별 히스토리 + 핀(북마크) 분리
 - 🌗 **다크모드** — 시스템/라이트/다크 토글
 - ⌨️ **단축키** — `Cmd/Ctrl+Enter` 실행, `Esc` 취소, `Cmd/Ctrl+1..9` 프로파일 빠른 전환
 
@@ -93,7 +96,11 @@ pnpm tauri build  # 데스크탑 바이너리 패키징 (LTO release)
 
 ## 스크린샷
 
-(추가 예정)
+> 정식 릴리스 직전에 보강 예정. 캡처 가이드:
+>
+> 1. `pnpm tauri dev` + `docker compose -f docker/docker-compose.yml up -d` + `docker/seed.sh`로 샘플 데이터 적재.
+> 2. 캡처할 화면: ① 프로파일 사이드바 + 메인 영역, ② 쿼리 빌더(where/orderBy/post_filter), ③ Table / Tree / JSON / Log 4 뷰 전환, ④ 통계 모달, ⑤ 운영 프로파일 경고 모달 + 상시 배너, ⑥ 다크 모드.
+> 3. `assets/screenshots/`에 PNG 저장 후 본 절에 `![](assets/screenshots/<name>.png)` 형태로 삽입.
 
 ## 디렉토리 구조
 
@@ -112,7 +119,9 @@ pnpm tauri build  # 데스크탑 바이너리 패키징 (LTO release)
 - [x] **Phase 4** — 정교한 쿼리 빌더 (전체 연산자 + 히스토리)
 - [x] **Phase 5** — 클라이언트 후처리 검색 (정규식/contains/JSONPath)
 - [x] **Phase 6** — Export(디스크 sink) / 카운트 / 다크모드 / 단축키
-- [x] **Phase 7** — 다듬기 & 배포
+- [x] **Phase 7** — 다듬기 & 배포 (한국어 에러 매핑 / 첫 실행 온보딩 / 운영 경고 / `tauri build`)
+- [x] **Phase 8** — 워크플로 가속 (인덱스 자동 가이드 / 저장된 쿼리 / 프로파일 그룹)
+- [x] **Phase 9** — 컬렉션 통계 (필드별 type 분포 / NULL 비율 / 상위 값)
 
 ## 보안 약속
 
