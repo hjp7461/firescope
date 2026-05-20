@@ -9,6 +9,7 @@ use crate::auth::TokenEventSink;
 
 #[derive(Serialize, Clone)]
 struct TokenRefreshed {
+    session_id: Uuid,
     profile_id: Uuid,
     expires_at: DateTime<Utc>,
 }
@@ -20,11 +21,12 @@ struct TokenExpired {
 
 pub struct TauriTokenSink<R: Runtime> {
     app: AppHandle<R>,
+    session_id: Uuid,
 }
 
 impl<R: Runtime> TauriTokenSink<R> {
-    pub fn new(app: AppHandle<R>) -> Self {
-        Self { app }
+    pub fn new(app: AppHandle<R>, session_id: Uuid) -> Self {
+        Self { app, session_id }
     }
 }
 
@@ -33,6 +35,7 @@ impl<R: Runtime> TokenEventSink for TauriTokenSink<R> {
         let _ = self.app.emit(
             "profile:token_refreshed",
             TokenRefreshed {
+                session_id: self.session_id,
                 profile_id,
                 expires_at,
             },

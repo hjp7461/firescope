@@ -462,33 +462,34 @@ impl SessionManager {
             });
         }
 
-        // 1) 자격증명 1회 조회 → 인증 핸들 + 라이브 FirestoreDb 구성.
+        // 1) 세션 ID 확정: 교체이면 기존 UUID 재사용, 신규이면 새 UUID 생성.
+        let new_session_id = session_id.unwrap_or_else(Uuid::new_v4);
+
+        // 2) 자격증명 1회 조회 → 인증 핸들 + 라이브 FirestoreDb 구성.
         //    기존 세션을 건드리기 전에 끝낸다 (실패 시 롤백 불필요).
         let credential = profiles.credential(profile_id)?;
-        let auth = self.build_auth(app, &profile, credential.as_ref()).await?;
+        let auth = self
+            .build_auth(app, &profile, credential.as_ref(), new_session_id)
+            .await?;
         let firestore = FirestoreClient::connect(&profile, credential.as_ref()).await?;
 
-        // 2) 교체 대상이 있으면 그 세션의 스트림만 정리.
-        let new_session_id = match session_id {
-            Some(existing) => {
-                self.streams.cancel_session(existing);
-                if let Some(prev) = self.remove_session(existing) {
-                    let prev_profile_id = prev.profile.id;
-                    drop(prev);
-                    let _ = app.emit(
-                        "profile:deactivated",
-                        DeactivatedPayload {
-                            session_id: existing,
-                            profile_id: prev_profile_id,
-                        },
-                    );
-                }
-                existing
+        // 3) 교체 대상이 있으면 그 세션의 스트림만 정리.
+        if let Some(existing) = session_id {
+            self.streams.cancel_session(existing);
+            if let Some(prev) = self.remove_session(existing) {
+                let prev_profile_id = prev.profile.id;
+                drop(prev);
+                let _ = app.emit(
+                    "profile:deactivated",
+                    DeactivatedPayload {
+                        session_id: existing,
+                        profile_id: prev_profile_id,
+                    },
+                );
             }
-            None => Uuid::new_v4(),
-        };
+        }
 
-        // 3) 새 세션 설치.
+        // 4) 새 세션 설치.
         let session = ActiveSession {
             session_id: new_session_id,
             profile,
@@ -499,7 +500,7 @@ impl SessionManager {
         let dto = session.to_dto();
         self.sessions.write().insert(new_session_id, session);
 
-        // 4) 소프트캡 안내 (활성화는 진행).
+        // 5) 소프트캡 안내 (활성화는 진행).
         let count = self.session_count();
         if count > SESSION_SOFT_CAP {
             let _ = app.emit(
@@ -586,13 +587,14 @@ impl SessionManager {
         app: &tauri::AppHandle<R>,
         profile: &Profile,
         credential: Option<&Credential>,
+        session_id: Uuid,
     ) -> AppResult<Arc<dyn AuthHandle>> {
         match profile.mode {
             ProfileMode::Emulator => Ok(Arc::new(EmulatorAuth)),
 
             ProfileMode::ServiceAccount => match credential {
                 Some(Credential::ServiceAccount { json }) => {
-                    let sink = Arc::new(TauriTokenSink::new(app.clone()));
+                    let sink = Arc::new(TauriTokenSink::new(app.clone(), session_id));
                     let auth = ServiceAccountAuth::new(json, sink, profile.id).await?;
                     Ok(Arc::new(auth))
                 }
