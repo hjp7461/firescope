@@ -25,6 +25,9 @@ const SAMPLE_SIZES = [100, 500, 1000] as const;
 type SampleSize = (typeof SAMPLE_SIZES)[number];
 const DEFAULT_SAMPLE_SIZE: SampleSize = 500;
 const TOP_SAMPLES = 5;
+const NESTED_DEPTHS = [1, 2, 3, 5] as const;
+type NestedDepth = (typeof NESTED_DEPTHS)[number];
+const DEFAULT_NESTED_DEPTH: NestedDepth = 3;
 
 type Props = {
   open: boolean;
@@ -48,13 +51,18 @@ export function StatsDialog({ open, onOpenChange }: Props) {
 
   const [sampleSize, setSampleSize] = useState<SampleSize>(DEFAULT_SAMPLE_SIZE);
   const [source, setSource] = useState<ExportSource>("matched");
+  const [includeNested, setIncludeNested] = useState(false);
+  const [nestedDepth, setNestedDepth] = useState<NestedDepth>(DEFAULT_NESTED_DEPTH);
   const [report, setReport] = useState<StatsReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // 동일 sink+source 조합 중복 호출 방지.
-  const lastComputed = useRef<{ streamId: string; source: ExportSource } | null>(
-    null,
-  );
+  // 동일 sink+source+nested 조합 중복 호출 방지.
+  const lastComputed = useRef<{
+    streamId: string;
+    source: ExportSource;
+    includeNested: boolean;
+    nestedDepth: NestedDepth;
+  } | null>(null);
 
   // 모달이 닫힐 때 상태를 초기화한다 (다음 오픈 시 신선한 시작).
   useEffect(() => {
@@ -81,21 +89,31 @@ export function StatsDialog({ open, onOpenChange }: Props) {
     if (!open) return;
     if (status !== "done" || !streamId) return;
     const fp = lastComputed.current;
-    if (fp && fp.streamId === streamId && fp.source === source) return;
+    if (
+      fp &&
+      fp.streamId === streamId &&
+      fp.source === source &&
+      fp.includeNested === includeNested &&
+      fp.nestedDepth === nestedDepth
+    ) {
+      return;
+    }
     setBusy(true);
     setError(null);
     void computeStats({
       stream_id: streamId,
       source,
       top_samples: TOP_SAMPLES,
+      include_nested: includeNested,
+      max_depth: nestedDepth,
     })
       .then((r) => {
-        lastComputed.current = { streamId, source };
+        lastComputed.current = { streamId, source, includeNested, nestedDepth };
         setReport(r);
       })
       .catch((err) => setError(toKoreanMessage(err)))
       .finally(() => setBusy(false));
-  }, [open, status, streamId, source]);
+  }, [open, status, streamId, source, includeNested, nestedDepth]);
 
   const isStreaming = status === "streaming";
   const fields = report?.fields ?? [];
@@ -155,6 +173,37 @@ export function StatsDialog({ open, onOpenChange }: Props) {
                 ))}
               </div>
             </>
+          )}
+
+          <label className="ml-2 flex items-center gap-1.5 text-xs">
+            <input
+              type="checkbox"
+              checked={includeNested}
+              onChange={(e) => setIncludeNested(e.target.checked)}
+              className="size-3.5 rounded border-input"
+            />
+            <span className="text-muted-foreground">nested 펼치기</span>
+          </label>
+
+          {includeNested && (
+            <div className="flex rounded-md border bg-muted/40 p-0.5">
+              {NESTED_DEPTHS.map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setNestedDepth(d)}
+                  className={cn(
+                    "rounded px-2 py-0.5 text-xs transition-colors",
+                    nestedDepth === d
+                      ? "bg-background font-medium shadow-sm"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                  title={`최대 깊이 ${d}`}
+                >
+                  d{d}
+                </button>
+              ))}
+            </div>
           )}
 
           <span className="ml-auto text-muted-foreground">
@@ -229,10 +278,26 @@ function FieldRow({
     return out;
   }, [stat, total]);
 
+  // dot-path의 가독성을 위해 depth만큼 leading indent + 부모.자식 dim.
+  const segs = stat.key.split(".");
+  const leaf = segs[segs.length - 1];
+  const ancestors = segs.slice(0, -1).join(".");
+
   return (
-    <li className="rounded border bg-card/30 p-2.5">
+    <li
+      className={cn(
+        "rounded border bg-card/30 p-2.5",
+        stat.depth > 0 && "border-dashed bg-card/10",
+      )}
+      style={stat.depth > 0 ? { marginLeft: `${stat.depth * 0.75}rem` } : undefined}
+    >
       <div className="mb-1.5 flex items-center justify-between gap-2">
-        <span className="truncate font-mono text-sm font-medium">{stat.key}</span>
+        <span className="truncate font-mono text-sm">
+          {ancestors && (
+            <span className="text-muted-foreground/70">{ancestors}.</span>
+          )}
+          <span className="font-medium">{leaf}</span>
+        </span>
         <div className="flex items-center gap-1.5 text-[10px]">
           {stat.null_count > 0 && (
             <Badge variant="secondary" className="px-1.5 py-0">
