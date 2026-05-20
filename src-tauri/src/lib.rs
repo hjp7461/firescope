@@ -68,6 +68,7 @@ pub fn run() {
             commands::profile::import_profiles,
             commands::session::activate_profile,
             commands::session::current_session,
+            commands::session::list_sessions,
             commands::session::deactivate,
             commands::session::refresh_token,
             commands::query::list_collections,
