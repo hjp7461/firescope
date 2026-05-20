@@ -14,16 +14,14 @@ export type AppErrorKind =
   | "confirmation_required"
   | "vault_error"
   | "duplicate_profile"
-  | "session_not_found"
-  | "session_limit_reached";
+  | "session_not_found";
 
 export type AppError =
   | {
-      kind: Exclude<AppErrorKind, "session_not_found" | "session_limit_reached">;
+      kind: Exclude<AppErrorKind, "session_not_found">;
       message: string;
     }
-  | { kind: "session_not_found"; session_id: string; message: string }
-  | { kind: "session_limit_reached"; active: number; max: number; message: string };
+  | { kind: "session_not_found"; session_id: string; message: string };
 
 /** invoke 거부 값을 AppError로 정규화. 알 수 없는 형태는 internal로 감싼다. */
 export function asAppError(err: unknown): AppError {
@@ -41,14 +39,6 @@ export function asAppError(err: unknown): AppError {
         kind,
         message,
         session_id: typeof e.session_id === "string" ? e.session_id : "",
-      };
-    }
-    if (kind === "session_limit_reached") {
-      return {
-        kind,
-        message,
-        active: typeof e.active === "number" ? e.active : 0,
-        max: typeof e.max === "number" ? e.max : 0,
       };
     }
     return { kind, message };

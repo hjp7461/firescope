@@ -34,8 +34,6 @@ function kindToMessage(e: AppError): string {
       return "같은 이름의 프로파일이 이미 있습니다.";
     case "session_not_found":
       return "이 탭의 세션이 만료되었습니다. 프로파일을 다시 활성화하세요.";
-    case "session_limit_reached":
-      return `동시 활성 세션이 ${e.active}개를 넘었습니다 (권장: ${e.max}).`;
     default: {
       // TypeScript exhaustiveness guard — should never reach here at runtime.
       const _exhaustive: never = e;
