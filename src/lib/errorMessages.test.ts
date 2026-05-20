@@ -28,10 +28,4 @@ describe("toKoreanMessage", () => {
     expect(toKoreanMessage({ kind: "session_not_found", session_id: "x", message: "no" }))
       .toContain("세션이 만료");
   });
-
-  it("session_limit_reached interpolates counts", () => {
-    expect(
-      toKoreanMessage({ kind: "session_limit_reached", active: 11, max: 10, message: "soft cap" } as any),
-    ).toContain("11");
-  });
 });

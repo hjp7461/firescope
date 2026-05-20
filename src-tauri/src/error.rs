@@ -58,12 +58,6 @@ pub enum AppError {
         message: String,
     },
 
-    #[error("session limit reached: {active}/{max}")]
-    SessionLimitReached {
-        active: u32,
-        max: u32,
-        message: String,
-    },
 }
 
 impl AppError {
@@ -120,13 +114,6 @@ impl AppError {
         }
     }
 
-    pub fn session_limit_reached(active: u32, max: u32, message: impl Into<String>) -> Self {
-        Self::SessionLimitReached {
-            active,
-            max,
-            message: message.into(),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -144,13 +131,4 @@ mod multi_tab_error_tests {
         assert_eq!(json["message"], "no such session");
     }
 
-    #[test]
-    fn session_limit_reached_serializes_with_counts() {
-        let err = AppError::session_limit_reached(11, 10, "soft cap reached");
-        let json = serde_json::to_value(&err).unwrap();
-        assert_eq!(json["kind"], "session_limit_reached");
-        assert_eq!(json["active"], 11);
-        assert_eq!(json["max"], 10);
-        assert_eq!(json["message"], "soft cap reached");
-    }
 }

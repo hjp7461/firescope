@@ -5,7 +5,7 @@ import { ProfileSidebar } from "@/components/profile/ProfileSidebar";
 import { ProfileFormDialog } from "@/components/profile/ProfileFormDialog";
 import { ProductionWarningModal } from "@/components/profile/ProductionWarningModal";
 import { useProfileStore } from "@/stores/profileStore";
-import { useSessionStore } from "@/stores/sessionStore";
+import { useActiveSession, useTabsStore } from "@/stores/tabsStore";
 import { deleteProfile, duplicateProfile } from "@/ipc/profile";
 import { activateProfile, currentSession } from "@/ipc/session";
 import { asAppError, type ProfileMeta, type Session } from "@/types";
@@ -40,8 +40,7 @@ function App() {
   const upsert = useProfileStore((s) => s.upsert);
   const removeById = useProfileStore((s) => s.removeById);
   const profiles = useProfileStore((s) => s.profiles);
-  const session = useSessionStore((s) => s.current);
-  const setCurrent = useSessionStore((s) => s.setCurrent);
+  const session = useActiveSession();
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<ProfileMeta | null>(null);
@@ -51,12 +50,13 @@ function App() {
   // 진입: 프로파일 목록 + 기존 세션 복구 + 로그 스트림 시작 + 테마 적용.
   useEffect(() => {
     loadProfiles();
+    const tabId = useTabsStore.getState().activeTabId;
     currentSession()
-      .then(setCurrent)
-      .catch(() => setCurrent(null));
+      .then((s) => tabId && useTabsStore.getState().setSession(tabId, s))
+      .catch(() => {});
     void startLogStream();
     return initTheme();
-  }, [loadProfiles, setCurrent]);
+  }, [loadProfiles]);
 
   // 활성 프로파일이 바뀌면 그 프로파일의 쿼리 히스토리를 로드 (격리).
   useEffect(() => {
@@ -99,23 +99,41 @@ function App() {
       listen<{ profile_id: string }>("profile:deleted", (e) =>
         removeById(e.payload.profile_id),
       ),
-      listen<Session>("profile:activated", (e) => setCurrent(e.payload)),
-      listen<{ profile_id: string }>("profile:deactivated", () =>
-        setCurrent(null),
-      ),
+      listen<Session>("profile:activated", (e) => {
+        const tabsState = useTabsStore.getState();
+        const target =
+          tabsState.tabs.find((t) => t.session?.session_id === e.payload.session_id) ??
+          tabsState.tabs.find((t) => t.id === tabsState.activeTabId);
+        if (target) tabsState.setSession(target.id, e.payload);
+      }),
+      listen<{ session_id: string; profile_id: string }>("profile:deactivated", (e) => {
+        const tabsState = useTabsStore.getState();
+        const target = tabsState.tabs.find(
+          (t) => t.session?.session_id === e.payload.session_id,
+        );
+        if (target) tabsState.setSession(target.id, null);
+      }),
       listen<{ profile_id: string; expires_at: string }>(
         "profile:token_refreshed",
         () => toast.info("액세스 토큰이 갱신되었습니다"),
       ),
+      listen<{ active: number; max: number }>("session:limit_warning", (e) => {
+        toast.warning(
+          `활성 세션 ${e.payload.active}/${e.payload.max} — 리소스 사용량이 늘어날 수 있습니다.`,
+        );
+      }),
     ]);
     return () => {
       uns.then((fns) => fns.forEach((f) => f()));
     };
-  }, [upsert, removeById, setCurrent]);
+  }, [upsert, removeById]);
 
   async function doActivate(p: ProfileMeta, confirmed: boolean) {
     try {
-      await activateProfile(p.id, confirmed);
+      const newSession = await activateProfile(p.id, confirmed);
+      // profile:activated 이벤트보다 먼저 즉시 attach — race-free 보장.
+      const tabId = useTabsStore.getState().activeTabId;
+      if (tabId) useTabsStore.getState().setSession(tabId, newSession);
       toast.success(`${p.name} 활성화됨`);
     } catch (err) {
       const e = asAppError(err);

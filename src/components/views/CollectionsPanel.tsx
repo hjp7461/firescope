@@ -7,13 +7,13 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { listCollections } from "@/ipc/query";
 import { useResultStore } from "@/stores/resultStore";
 import { useQueryStore } from "@/stores/queryStore";
-import { useSessionStore } from "@/stores/sessionStore";
+import { useActiveSession } from "@/stores/tabsStore";
 import { toKoreanMessage } from "@/lib/errorMessages";
 
 // 활성 세션의 루트 컬렉션 목록. 클릭 → 빌더 드래프트를 해당 컬렉션으로
 // 맞추고 첫 100건 쿼리. (빌더가 열려 있으면 그대로 다듬어 재실행 가능)
 export function CollectionsPanel() {
-  const sessionId = useSessionStore((s) => s.current?.session_id ?? null);
+  const sessionId = useActiveSession()?.session_id ?? null;
   const [collections, setCollections] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const activePath = useResultStore((s) => s.collectionPath);
