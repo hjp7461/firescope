@@ -4,3 +4,4 @@ export * from "./error";
 export * from "./query";
 export * from "./log";
 export * from "./stats";
+export * from "./listener";
