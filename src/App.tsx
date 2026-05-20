@@ -21,6 +21,7 @@ import { useHistoryStore } from "@/stores/historyStore";
 import { startLogStream } from "@/stores/logStore";
 import { initTheme } from "@/stores/themeStore";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { TabBar } from "@/components/tabs/TabBar";
 import { useResultStore } from "@/stores/resultStore";
 import { useQueryStore } from "@/stores/queryStore";
 import { bindGlobalHotkeys } from "@/lib/hotkeys";
@@ -226,6 +227,7 @@ function App() {
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
+        {profiles.length > 0 && <TabBar />}
         {activeProfile?.read_only_warning && (
           <div className="flex items-center justify-center gap-2 bg-destructive px-4 py-1.5 text-xs font-medium text-white">
             <span className="rounded-sm bg-white/20 px-1.5 py-0.5">운영</span>
@@ -236,7 +238,7 @@ function App() {
             <span>읽기 전용 (쓰기 요청 차단됨)</span>
           </div>
         )}
-        <div className="absolute right-2 top-1 z-10">
+        <div className="absolute right-2 top-10 z-10">
           <ThemeToggle className="size-7 p-0" />
         </div>
 
