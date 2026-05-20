@@ -16,7 +16,8 @@ import { ModeIcon } from "@/components/profile/mode";
 import { useResultStore } from "@/stores/resultStore";
 import { useViewStore } from "@/stores/viewStore";
 import { exportResult, queryCount } from "@/ipc/query";
-import { asAppError, type ExportFormat, type ExportSource, type ProfileMode } from "@/types";
+import { type ExportFormat, type ExportSource, type ProfileMode } from "@/types";
+import { toKoreanMessage } from "@/lib/errorMessages";
 import { ViewTabs } from "./ViewTabs";
 
 export function ResultBar({
@@ -68,7 +69,7 @@ export function ResultBar({
         `${res.row_count.toLocaleString()}건 저장 (${formatBytes(res.written_bytes)})`,
       );
     } catch (err) {
-      toast.error(asAppError(err).message);
+      toast.error(toKoreanMessage(err));
     } finally {
       setBusy(null);
     }
@@ -82,7 +83,7 @@ export function ResultBar({
       await writeText(payload);
       toast.success(`${rowsData.length.toLocaleString()}건 클립보드 복사`);
     } catch (err) {
-      toast.error(asAppError(err).message);
+      toast.error(toKoreanMessage(err));
     } finally {
       setBusy(null);
     }
@@ -99,7 +100,7 @@ export function ResultBar({
           : `${res.matched.toLocaleString()}건`,
       );
     } catch (err) {
-      toast.error(asAppError(err).message);
+      toast.error(toKoreanMessage(err));
     } finally {
       setBusy(null);
     }

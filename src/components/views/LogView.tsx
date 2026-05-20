@@ -5,7 +5,8 @@ import { toast } from "sonner";
 import { useLogStore } from "@/stores/logStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { cn } from "@/lib/utils";
-import { asAppError, type LogEntry, type LogLevel } from "@/types";
+import { type LogEntry, type LogLevel } from "@/types";
+import { toKoreanMessage } from "@/lib/errorMessages";
 
 const LEVELS: LogLevel[] = ["error", "warn", "info", "debug"];
 const COLOR: Record<LogLevel, string> = {
@@ -125,7 +126,7 @@ async function copyVisible(entries: LogEntry[]): Promise<void> {
     await writeText(text);
     toast.success(`${entries.length.toLocaleString()}개 로그 복사`);
   } catch (err) {
-    toast.error(asAppError(err).message);
+    toast.error(toKoreanMessage(err));
   }
 }
 

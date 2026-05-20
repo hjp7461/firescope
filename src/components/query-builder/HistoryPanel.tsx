@@ -5,7 +5,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { useHistoryStore } from "@/stores/historyStore";
 import { useResultStore } from "@/stores/resultStore";
-import { asAppError, type QueryDsl, type QueryHistoryEntry } from "@/types";
+import { type QueryDsl, type QueryHistoryEntry } from "@/types";
+import { toKoreanMessage } from "@/lib/errorMessages";
 
 function targetLabel(dsl: QueryDsl): string {
   return dsl.target.kind === "collection"
@@ -94,7 +95,7 @@ export function HistoryPanel() {
           className="h-6 gap-1 px-1.5 text-xs"
           disabled={entries.length === 0}
           onClick={() => {
-            void clear().catch((e) => toast.error(asAppError(e).message));
+            void clear().catch((e) => toast.error(toKoreanMessage(e)));
           }}
         >
           <Trash2 className="size-3" />
@@ -123,7 +124,7 @@ export function HistoryPanel() {
                 onReplay={() => void runDsl(e.dsl)}
                 onRemove={() => {
                   void remove(e.id).catch((err) =>
-                    toast.error(asAppError(err).message),
+                    toast.error(toKoreanMessage(err)),
                   );
                 }}
               />

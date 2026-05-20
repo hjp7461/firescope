@@ -26,7 +26,8 @@ import {
   testProfile,
   updateProfile,
 } from "@/ipc/profile";
-import { asAppError, type ProfileMeta, type ProfileMode } from "@/types";
+import { type ProfileMeta, type ProfileMode } from "@/types";
+import { toKoreanMessage } from "@/lib/errorMessages";
 import { MODE_LABEL } from "./mode";
 
 type Props = {
@@ -110,7 +111,7 @@ export function ProfileFormDialog({ open, onOpenChange, initial }: Props) {
       toast.success(editing ? "프로파일이 수정되었습니다" : "프로파일이 추가되었습니다");
       setStep("verify");
     } catch (err) {
-      toast.error(asAppError(err).message);
+      toast.error(toKoreanMessage(err));
     } finally {
       setBusy(false);
     }
@@ -123,7 +124,7 @@ export function ProfileFormDialog({ open, onOpenChange, initial }: Props) {
       const r = await testProfile(savedId);
       toast.success(`연결 OK · ${r.project_id} · ${r.latency_ms}ms`);
     } catch (err) {
-      toast.error(asAppError(err).message);
+      toast.error(toKoreanMessage(err));
     } finally {
       setBusy(false);
     }
