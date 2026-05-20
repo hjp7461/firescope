@@ -44,7 +44,9 @@ function App() {
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<ProfileMeta | null>(null);
-  const [pendingProd, setPendingProd] = useState<ProfileMeta | null>(null);
+  const [pendingProd, setPendingProd] = useState<
+    { profile: ProfileMeta; inNewTab: boolean } | null
+  >(null);
   const [builderOpen, setBuilderOpen] = useState(true);
 
   // 진입: 프로파일 목록 + 기존 세션 복구 + 로그 스트림 시작 + 테마 적용.
@@ -144,26 +146,39 @@ function App() {
     };
   }, [upsert, removeById]);
 
-  async function doActivate(p: ProfileMeta, confirmed: boolean) {
+  async function doActivate(p: ProfileMeta, confirmed: boolean, inNewTab: boolean) {
     try {
-      const newSession = await activateProfile(p.id, confirmed);
-      // profile:activated 이벤트보다 먼저 즉시 attach — race-free 보장.
-      const tabId = useTabsStore.getState().activeTabId;
-      if (tabId) useTabsStore.getState().setSession(tabId, newSession);
+      let targetTabId: string | null;
+      if (inNewTab) {
+        targetTabId = useTabsStore.getState().add();
+      } else {
+        targetTabId = useTabsStore.getState().activeTabId;
+      }
+      // 활성 탭 자리 교체면 그 탭의 기존 session_id를 백엔드에 넘김 (없으면 null = 새 세션)
+      const existingSessionId = inNewTab
+        ? null
+        : (useTabsStore.getState().tabs.find((t) => t.id === targetTabId)?.session?.session_id ?? null);
+      const newSession = await activateProfile(p.id, confirmed, existingSessionId);
+      if (targetTabId) {
+        useTabsStore.getState().setSession(targetTabId, newSession);
+      }
       toast.success(`${p.name} 활성화됨`);
     } catch (err) {
       const e = asAppError(err);
       if (e.kind === "confirmation_required") {
-        setPendingProd(p);
+        setPendingProd({ profile: p, inNewTab });
         return;
       }
       toast.error(toKoreanMessage(e));
     }
   }
 
-  function onActivate(p: ProfileMeta) {
-    if (p.require_confirmation) setPendingProd(p);
-    else void doActivate(p, false);
+  function onActivate(p: ProfileMeta, inNewTab: boolean) {
+    if (p.require_confirmation) {
+      setPendingProd({ profile: p, inNewTab });
+    } else {
+      void doActivate(p, false, inNewTab);
+    }
   }
 
   async function onDelete(p: ProfileMeta) {
@@ -254,12 +269,12 @@ function App() {
 
       <ProductionWarningModal
         open={!!pendingProd}
-        profileName={pendingProd?.name ?? ""}
-        projectId={pendingProd?.project_id ?? ""}
+        profileName={pendingProd?.profile.name ?? ""}
+        projectId={pendingProd?.profile.project_id ?? ""}
         onConfirm={() => {
           const p = pendingProd;
           setPendingProd(null);
-          if (p) void doActivate(p, true);
+          if (p) void doActivate(p.profile, true, p.inNewTab);
         }}
         onCancel={() => setPendingProd(null)}
       />

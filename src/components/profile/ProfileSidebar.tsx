@@ -40,7 +40,7 @@ export function ProfileSidebar({
   onDelete,
 }: {
   onAdd: () => void;
-  onActivate: (p: ProfileMeta) => void;
+  onActivate: (p: ProfileMeta, inNewTab: boolean) => void;
   onEdit: (p: ProfileMeta) => void;
   onDuplicate: (p: ProfileMeta) => void;
   onSetCredential: (p: ProfileMeta) => void;
@@ -119,14 +119,14 @@ export function ProfileSidebar({
                             >
                               <button
                                 type="button"
-                                onDoubleClick={() => onActivate(p)}
+                                onClick={(e) => onActivate(p, e.metaKey || e.ctrlKey)}
                                 className={cn(
                                   "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors",
                                   active
                                     ? "bg-sidebar-accent text-sidebar-accent-foreground"
                                     : "hover:bg-sidebar-accent/50",
                                 )}
-                                title="더블클릭하여 활성화"
+                                title="클릭하여 활성화 · Cmd/Ctrl+클릭으로 새 탭"
                               >
                                 <span
                                   className="size-2.5 shrink-0 rounded-full border"
@@ -171,7 +171,7 @@ export function ProfileSidebar({
 
       {profiles.length > 0 && (
         <p className="border-t px-3 py-2 text-[11px] text-muted-foreground">
-          더블클릭으로 활성화 · 우클릭으로 메뉴
+          클릭으로 활성화 · Cmd/Ctrl+클릭으로 새 탭 · 우클릭으로 메뉴
         </p>
       )}
     </aside>
