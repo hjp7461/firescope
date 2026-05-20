@@ -117,6 +117,11 @@ function App() {
         "profile:token_refreshed",
         () => toast.info("액세스 토큰이 갱신되었습니다"),
       ),
+      listen<{ active: number; max: number }>("session:limit_warning", (e) => {
+        toast.warning(
+          `활성 세션 ${e.payload.active}/${e.payload.max} — 리소스 사용량이 늘어날 수 있습니다.`,
+        );
+      }),
     ]);
     return () => {
       uns.then((fns) => fns.forEach((f) => f()));
