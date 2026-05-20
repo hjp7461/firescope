@@ -9,11 +9,13 @@ export function TabItem({
   isActive,
   onFocus,
   onClose,
+  onDormantClick,
 }: {
   tab: Tab;
   isActive: boolean;
   onFocus: () => void;
   onClose: () => void;
+  onDormantClick?: () => void;
 }) {
   const profiles = useProfileStore((s) => s.profiles);
   const profile = tab.session
@@ -32,7 +34,13 @@ export function TabItem({
     <div
       role="tab"
       aria-selected={isActive}
-      onClick={onFocus}
+      onClick={() => {
+        if (isDormant && onDormantClick) {
+          onDormantClick();
+        } else {
+          onFocus();
+        }
+      }}
       onAuxClick={(e) => {
         // Middle-click closes (browser convention).
         if (e.button === 1) onClose();
