@@ -246,6 +246,13 @@ pub struct ComputeStatsParams {
     pub source: Option<ExportSource>,
     #[serde(default)]
     pub top_samples: Option<usize>,
+    /// nested map 펼침 여부 (Phase 10, `docs/03-ipc-contract.md` v0.9).
+    /// 기본 false — top-level만 산출(v0.7 후방호환).
+    #[serde(default)]
+    pub include_nested: Option<bool>,
+    /// nested 펼침 최대 깊이. 1..=MAX_NESTED_DEPTH로 클램프, 기본 3.
+    #[serde(default)]
+    pub max_depth: Option<usize>,
 }
 
 const DEFAULT_TOP_SAMPLES: usize = 5;
@@ -268,6 +275,8 @@ pub fn compute_stats(
         })?;
     let source = params.source.unwrap_or_default();
     let top_samples = stats::clamp_top_samples(params.top_samples.unwrap_or(DEFAULT_TOP_SAMPLES));
+    let include_nested = params.include_nested.unwrap_or(false);
+    let max_depth = params.max_depth.unwrap_or(stats::DEFAULT_NESTED_DEPTH);
 
     let docs: Vec<Document> = {
         let guard = sink.lock();
@@ -287,7 +296,13 @@ pub fn compute_stats(
         ExportSource::Matched => "matched",
         ExportSource::Scanned => "scanned",
     };
-    let report = stats::compute_field_stats(docs, source_label, top_samples);
+    let report = stats::compute_field_stats_nested(
+        docs,
+        source_label,
+        top_samples,
+        include_nested,
+        max_depth,
+    );
 
     tracing::info!(
         target: "query",
@@ -295,6 +310,8 @@ pub fn compute_stats(
         source = ?source,
         sample_size = report.sample_size,
         field_count = report.fields.len(),
+        include_nested,
+        max_depth,
         op = "compute_stats",
         "computed collection stats"
     );
