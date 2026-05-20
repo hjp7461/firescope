@@ -24,6 +24,8 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { useResultStore } from "@/stores/resultStore";
 import { useQueryStore } from "@/stores/queryStore";
 import { bindGlobalHotkeys } from "@/lib/hotkeys";
+import { toKoreanMessage } from "@/lib/errorMessages";
+import { EmptyState } from "@/components/EmptyState";
 
 function ResultPane() {
   const view = useViewStore((s) => s.activeView);
@@ -121,7 +123,7 @@ function App() {
         setPendingProd(p);
         return;
       }
-      toast.error(e.message);
+      toast.error(toKoreanMessage(e));
     }
   }
 
@@ -135,7 +137,7 @@ function App() {
       await deleteProfile(p.id);
       toast.success(`${p.name} 삭제됨`);
     } catch (err) {
-      toast.error(asAppError(err).message);
+      toast.error(toKoreanMessage(err));
     }
   }
 
@@ -146,7 +148,7 @@ function App() {
       await duplicateProfile(p.id, newName);
       toast.success("복제되었습니다 (자격증명은 다시 입력 필요)");
     } catch (err) {
-      toast.error(asAppError(err).message);
+      toast.error(toKoreanMessage(err));
     }
   }
 
@@ -176,8 +178,13 @@ function App() {
 
       <main className="flex min-w-0 flex-1 flex-col">
         {activeProfile?.read_only_warning && (
-          <div className="bg-destructive px-4 py-1.5 text-center text-xs font-medium text-white">
-            운영 환경에 연결되어 있습니다 · 읽기 전용
+          <div className="flex items-center justify-center gap-2 bg-destructive px-4 py-1.5 text-xs font-medium text-white">
+            <span className="rounded-sm bg-white/20 px-1.5 py-0.5">운영</span>
+            <span>{activeProfile.name}</span>
+            <span className="opacity-80">·</span>
+            <code className="opacity-90">{activeProfile.project_id}</code>
+            <span className="opacity-80">·</span>
+            <span>읽기 전용 (쓰기 요청 차단됨)</span>
           </div>
         )}
         <div className="absolute right-2 top-1 z-10">
@@ -201,11 +208,7 @@ function App() {
             </div>
           </div>
         ) : (
-          <div className="flex flex-1 items-center justify-center p-8">
-            <p className="text-sm text-muted-foreground">
-              왼쪽에서 프로파일을 더블클릭해 활성화하세요.
-            </p>
-          </div>
+          <EmptyState profileCount={profiles.length} onAdd={openCreate} />
         )}
       </main>
 

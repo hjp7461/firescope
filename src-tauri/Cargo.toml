@@ -49,3 +49,11 @@ tauri-plugin-log = "2.8.0"
 tauri-plugin-clipboard-manager = "2.3.2"
 serde_json_path = "0.7.2"
 
+# Release 빌드 산출물 크기 최소화 (원칙 9 Bundle Discipline).
+[profile.release]
+codegen-units = 1
+lto = true
+strip = "symbols"
+panic = "abort"
+opt-level = "z"
+

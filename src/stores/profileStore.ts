@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { listProfiles } from "@/ipc/profile";
-import { asAppError, type ProfileMeta } from "@/types";
+import { type ProfileMeta } from "@/types";
+import { toKoreanMessage } from "@/lib/errorMessages";
 
 // 원칙 10·13: `profiles`는 백엔드에서 받은 그대로(단일 진실 원천),
 // 나머지는 파생/UI 상태. 갱신은 `profile:*` 이벤트로 자동 동기화한다.
@@ -23,7 +24,7 @@ export const useProfileStore = create<ProfileState>((set) => ({
     try {
       set({ profiles: await listProfiles(), loading: false });
     } catch (err) {
-      set({ loading: false, error: asAppError(err).message });
+      set({ loading: false, error: toKoreanMessage(err) });
     }
   },
 

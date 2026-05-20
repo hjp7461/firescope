@@ -4,12 +4,12 @@ import { cancelStream, queryDocuments } from "@/ipc/query";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useHistoryStore } from "@/stores/historyStore";
 import {
-  asAppError,
   type FirestoreDocument,
   type QueryChunk,
   type QueryDone,
   type QueryDsl,
 } from "@/types";
+import { toKoreanMessage } from "@/lib/errorMessages";
 
 type Status = "idle" | "streaming" | "done" | "error";
 
@@ -115,7 +115,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
         `query:error:${streamId}`,
         (e) => {
           if (get().streamId !== streamId) return;
-          set({ status: "error", error: e.payload.message });
+          set({ status: "error", error: toKoreanMessage(e.payload) });
           void teardown();
         },
       ),
@@ -124,7 +124,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
     try {
       await queryDocuments(streamId, dsl);
     } catch (err) {
-      set({ status: "error", error: asAppError(err).message });
+      set({ status: "error", error: toKoreanMessage(err) });
       await teardown();
     }
   },
