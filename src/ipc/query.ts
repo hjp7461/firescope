@@ -2,6 +2,7 @@
 
 import { call } from "./index";
 import type {
+  ComputeStatsParams,
   ExportFormat,
   ExportResultResponse,
   ExportSource,
@@ -9,6 +10,7 @@ import type {
   QueryCountResponse,
   QueryDsl,
   QueryHistoryEntry,
+  StatsReport,
 } from "@/types";
 
 export const listCollections = () =>
@@ -38,6 +40,11 @@ export const exportResult = (params: {
 
 export const queryCount = (dsl: QueryDsl) =>
   call<QueryCountResponse>("query_count", { dsl });
+
+// --- Phase 9: 컬렉션 통계 (`docs/03-ipc-contract.md` §5 v0.7) ---
+
+export const computeStats = (params: ComputeStatsParams) =>
+  call<StatsReport>("compute_stats", { params });
 
 // --- 쿼리 히스토리 (`docs/03-ipc-contract.md` §8) ---
 

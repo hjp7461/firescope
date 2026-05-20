@@ -21,6 +21,7 @@ use crate::firestore::streaming::run_query;
 use crate::firestore::{decode_document, Document, ExportFormat, ExportSource};
 use crate::query::dsl::QueryDsl;
 use crate::query::history::HistoryEntry;
+use crate::query::stats::{self, StatsReport};
 use crate::query::{post_filter, translate, validate};
 use crate::state::AppState;
 
@@ -224,6 +225,68 @@ pub async fn query_count(
         }
     }
     Ok(QueryCountResponse { matched, scanned })
+}
+
+// --- Phase 9: 컬렉션 통계 (`docs/03-ipc-contract.md` §5 compute_stats) ---
+
+#[derive(Deserialize)]
+pub struct ComputeStatsParams {
+    pub stream_id: String,
+    #[serde(default)]
+    pub source: Option<ExportSource>,
+    #[serde(default)]
+    pub top_samples: Option<usize>,
+}
+
+const DEFAULT_TOP_SAMPLES: usize = 5;
+
+/// 활성 스트림의 디스크 sink에서 결과를 읽어 필드별 통계를 산출한다.
+/// sink가 없으면(=다른 쿼리가 시작되었거나 세션이 해제됨) `internal` 에러.
+#[tauri::command(rename_all = "snake_case")]
+pub fn compute_stats(
+    state: State<'_, AppState>,
+    params: ComputeStatsParams,
+) -> AppResult<StatsReport> {
+    let streams = state.sessions.streams();
+    let sink = streams
+        .sink(&params.stream_id)
+        .ok_or_else(|| AppError::Internal {
+            message: format!("no result sink for stream {}", params.stream_id),
+        })?;
+    let source = params.source.unwrap_or_default();
+    let top_samples = stats::clamp_top_samples(params.top_samples.unwrap_or(DEFAULT_TOP_SAMPLES));
+
+    let docs: Vec<Document> = {
+        let guard = sink.lock();
+        let iter = guard.iter(source).map_err(|e| AppError::Io {
+            message: format!("failed to read result sink: {e}"),
+        })?;
+        let mut out = Vec::new();
+        for item in iter {
+            out.push(item.map_err(|e| AppError::Io {
+                message: format!("failed to read result sink: {e}"),
+            })?);
+        }
+        out
+    };
+
+    let source_label = match source {
+        ExportSource::Matched => "matched",
+        ExportSource::Scanned => "scanned",
+    };
+    let report = stats::compute_field_stats(docs, source_label, top_samples);
+
+    tracing::info!(
+        target: "query",
+        stream_id = %params.stream_id,
+        source = ?source,
+        sample_size = report.sample_size,
+        field_count = report.fields.len(),
+        op = "compute_stats",
+        "computed collection stats"
+    );
+
+    Ok(report)
 }
 
 // --- 쿼리 히스토리 (`docs/03-ipc-contract.md` §8) ---

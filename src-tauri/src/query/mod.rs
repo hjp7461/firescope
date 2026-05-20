@@ -8,6 +8,7 @@
 pub mod dsl;
 pub mod history;
 pub mod post_filter;
+pub mod stats;
 pub mod translate;
 pub mod validate;
 
