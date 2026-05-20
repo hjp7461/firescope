@@ -5,9 +5,10 @@ import { ProfileSidebar } from "@/components/profile/ProfileSidebar";
 import { ProfileFormDialog } from "@/components/profile/ProfileFormDialog";
 import { ProductionWarningModal } from "@/components/profile/ProductionWarningModal";
 import { useProfileStore } from "@/stores/profileStore";
-import { useActiveSession, useTabsStore } from "@/stores/tabsStore";
+import { useActiveSession, useTabsStore, hydrateTabs, setPersistenceEnabled } from "@/stores/tabsStore";
 import { deleteProfile, duplicateProfile } from "@/ipc/profile";
-import { activateProfile, currentSession } from "@/ipc/session";
+import { activateProfile } from "@/ipc/session";
+import { listTabs } from "@/ipc/tabs";
 import { asAppError, type ProfileMeta, type Session } from "@/types";
 import { CollectionsPanel } from "@/components/views/CollectionsPanel";
 import { TableView } from "@/components/views/TableView";
@@ -50,15 +51,34 @@ function App() {
   >(null);
   const [builderOpen, setBuilderOpen] = useState(true);
 
-  // 진입: 프로파일 목록 + 기존 세션 복구 + 로그 스트림 시작 + 테마 적용.
+  // 진입: 프로파일 목록 + 탭 하이드레이트 + 로그 스트림 시작 + 테마 적용.
   useEffect(() => {
-    loadProfiles();
-    const tabId = useTabsStore.getState().activeTabId;
-    currentSession()
-      .then((s) => tabId && useTabsStore.getState().setSession(tabId, s))
-      .catch(() => {});
-    void startLogStream();
-    return initTheme();
+    let cleanup: (() => void) | undefined;
+    (async () => {
+      // 1) 프로파일 먼저 로드 — hydrate가 require_confirmation 플래그를 읽음
+      await loadProfiles();
+      // 2) 탭 하이드레이트 (이 단계 동안 persistence는 꺼둠)
+      setPersistenceEnabled(false);
+      try {
+        const bundle = await listTabs();
+        const profilesById = new Map(
+          useProfileStore.getState().profiles.map((p) => [p.id, p]),
+        );
+        await hydrateTabs(bundle, profilesById, async (profile_id) => {
+          return activateProfile(profile_id, false, null);
+        });
+      } catch (err) {
+        toast.error(toKoreanMessage(err));
+      } finally {
+        setPersistenceEnabled(true);
+      }
+      // 3) 로그 스트림 + 테마
+      void startLogStream();
+      cleanup = initTheme();
+    })();
+    return () => {
+      cleanup?.();
+    };
   }, [loadProfiles]);
 
   // 활성 프로파일이 바뀌면 그 프로파일의 쿼리 히스토리를 로드 (격리).
@@ -227,7 +247,18 @@ function App() {
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
-        {profiles.length > 0 && <TabBar />}
+        {profiles.length > 0 && (
+          <TabBar
+            onDormantClick={(tab) => {
+              if (!tab.pendingProfileId) return;
+              const profile = profiles.find((p) => p.id === tab.pendingProfileId);
+              if (!profile) return;
+              // 활성화 전에 그 탭으로 포커스 — onActivate가 setSession 시 활성 탭에 attach
+              useTabsStore.getState().focus(tab.id);
+              onActivate(profile, false);
+            }}
+          />
+        )}
         {activeProfile?.read_only_warning && (
           <div className="flex items-center justify-center gap-2 bg-destructive px-4 py-1.5 text-xs font-medium text-white">
             <span className="rounded-sm bg-white/20 px-1.5 py-0.5">운영</span>
