@@ -1,9 +1,15 @@
 import { Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useTabsStore } from "@/stores/tabsStore";
+import { useTabsStore, type Tab } from "@/stores/tabsStore";
 import { TabItem } from "./TabItem";
 
-export function TabBar({ className }: { className?: string }) {
+export function TabBar({
+  className,
+  onDormantClick,
+}: {
+  className?: string;
+  onDormantClick?: (tab: Tab) => void;
+}) {
   const tabs = useTabsStore((s) => s.tabs);
   const activeTabId = useTabsStore((s) => s.activeTabId);
   const focus = useTabsStore((s) => s.focus);
@@ -26,6 +32,9 @@ export function TabBar({ className }: { className?: string }) {
             isActive={tab.id === activeTabId}
             onFocus={() => focus(tab.id)}
             onClose={() => close(tab.id)}
+            onDormantClick={
+              onDormantClick ? () => onDormantClick(tab) : undefined
+            }
           />
         ))}
       </div>
