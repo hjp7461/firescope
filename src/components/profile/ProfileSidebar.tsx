@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useProfileStore } from "@/stores/profileStore";
-import { useSessionStore } from "@/stores/sessionStore";
+import { useActiveSession } from "@/stores/tabsStore";
 import type { ProfileMeta } from "@/types";
 import { ModeIcon } from "./mode";
 import { ProfileContextMenu } from "./ProfileContextMenu";
@@ -48,7 +48,7 @@ export function ProfileSidebar({
 }) {
   const profiles = useProfileStore((s) => s.profiles);
   const loading = useProfileStore((s) => s.loading);
-  const activeProfileId = useSessionStore((s) => s.current?.profile_id ?? null);
+  const activeProfileId = useActiveSession()?.profile_id ?? null;
   // 접힌 그룹 이름 집합 (기본은 모두 펼침).
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const toggleGroup = (g: string) =>

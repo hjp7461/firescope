@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { cancelStream, queryDocuments } from "@/ipc/query";
-import { useSessionStore } from "@/stores/sessionStore";
+import { getActiveSession } from "@/stores/tabsStore";
 import { useHistoryStore } from "@/stores/historyStore";
 import {
   type FirestoreDocument,
@@ -108,7 +108,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
           tookMs: e.payload.took_ms,
         });
         // 성공한 쿼리만 활성 프로파일 히스토리에 기록 (격리).
-        const profileId = useSessionStore.getState().current?.profile_id;
+        const profileId = getActiveSession()?.profile_id;
         const ranDsl = get().lastDsl;
         if (profileId && ranDsl) {
           void useHistoryStore

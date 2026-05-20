@@ -3,7 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { toast } from "sonner";
 import { useLogStore } from "@/stores/logStore";
-import { useSessionStore } from "@/stores/sessionStore";
+import { useActiveSession } from "@/stores/tabsStore";
 import { cn } from "@/lib/utils";
 import { type LogEntry, type LogLevel } from "@/types";
 import { toKoreanMessage } from "@/lib/errorMessages";
@@ -23,7 +23,7 @@ export function LogView() {
   const toggleLevel = useLogStore((s) => s.toggleLevel);
   const setOnly = useLogStore((s) => s.setOnlyActiveProfile);
   const clear = useLogStore((s) => s.clear);
-  const activeId = useSessionStore((s) => s.current?.profile_id ?? null);
+  const activeId = useActiveSession()?.profile_id ?? null;
 
   const filtered = useMemo(
     () =>
