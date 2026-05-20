@@ -54,6 +54,12 @@ pub fn run() {
             app.manage(AppState::new(profiles, history));
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                let state: tauri::State<crate::state::AppState> = window.state();
+                state.sessions.deactivate_all(window.app_handle());
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::profile::list_profiles,
             commands::profile::get_profile,
