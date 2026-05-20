@@ -1,5 +1,11 @@
 import { useState } from "react";
-import { Calculator, ClipboardCopy, Download, SlidersHorizontal } from "lucide-react";
+import {
+  BarChart3,
+  Calculator,
+  ClipboardCopy,
+  Download,
+  SlidersHorizontal,
+} from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -20,6 +26,7 @@ import { exportResult, queryCount } from "@/ipc/query";
 import { type ExportFormat, type ExportSource, type ProfileMode } from "@/types";
 import { toKoreanMessage } from "@/lib/errorMessages";
 import { ViewTabs } from "./ViewTabs";
+import { StatsDialog } from "./StatsDialog";
 
 export function ResultBar({
   projectId,
@@ -50,6 +57,7 @@ export function ResultBar({
   // (보이는 데이터와 복사 대상이 어긋나는 혼동 방지).
   const showResultActions = activeView !== "log";
   const [busy, setBusy] = useState<"export" | "count" | "copy" | null>(null);
+  const [statsOpen, setStatsOpen] = useState(false);
 
   const doExport = async (format: ExportFormat, source: ExportSource) => {
     if (!streamId || busy) return;
@@ -111,6 +119,7 @@ export function ResultBar({
   const canExport = status === "done" && streamId != null && rows > 0;
   const canCopy = status === "done" && rows > 0;
   const canCount = status === "done" && lastDsl != null;
+  const canStats = status === "done" && streamId != null && rows > 0;
 
   return (
     <div className="flex items-center gap-3 border-b px-3 py-1.5 text-xs">
@@ -180,6 +189,18 @@ export function ResultBar({
                   <Calculator className="size-3.5" />
                   카운트
                 </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 gap-1 px-2 text-xs"
+                  disabled={!canStats}
+                  onClick={() => setStatsOpen(true)}
+                  title="필드별 타입 분포·NULL 비율·상위 값"
+                >
+                  <BarChart3 className="size-3.5" />
+                  통계
+                </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -246,6 +267,7 @@ export function ResultBar({
           </span>
         )}
       </span>
+      <StatsDialog open={statsOpen} onOpenChange={setStatsOpen} />
     </div>
   );
 }
