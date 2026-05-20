@@ -103,7 +103,8 @@ pub async fn query_documents(
     // 새 쿼리가 시작되면 이전 stream들의 sink를 정리한다 (원칙 5 — 운영 데이터를
     // 디스크에 오래 두지 않음). 사용자가 export하지 않으면 자동 폐기.
     registry.cancel_all();
-    let (_flag, sink) = registry.register(&stream_id);
+    // TODO(multi-tab Task 8): pass real session_id from the command param
+    let (_flag, sink) = registry.register(&stream_id, uuid::Uuid::nil());
     // 즉시 반환, 결과는 이벤트로 (원칙 6).
     tokio::spawn(run_query(app, client, registry, sink, stream_id, dsl));
     Ok(())

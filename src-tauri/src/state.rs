@@ -34,6 +34,7 @@ pub struct StreamRegistry {
 }
 
 struct StreamEntry {
+    session_id: uuid::Uuid,
     cancelled: Arc<std::sync::atomic::AtomicBool>,
     /// `query_documents` 시작 시 생성, 종료/취소 시 drop. `take_sink`로
     /// 외부에서 빼낼 수도 있으나 통상은 등록자가 보관한다.
@@ -50,6 +51,7 @@ impl StreamRegistry {
     pub fn register(
         &self,
         stream_id: &str,
+        session_id: uuid::Uuid,
     ) -> (
         Arc<std::sync::atomic::AtomicBool>,
         Option<Arc<parking_lot::Mutex<ResultSink>>>,
@@ -62,6 +64,7 @@ impl StreamRegistry {
                 tracing::debug!(
                     target: "query",
                     stream_id = %stream_id,
+                    session_id = %session_id,
                     sink_path = %s.path().display(),
                     "result sink created"
                 );
@@ -72,12 +75,14 @@ impl StreamRegistry {
                     target: "query",
                     error = %e,
                     stream_id = %stream_id,
+                    session_id = %session_id,
                     "failed to create result sink; export_result will be unavailable"
                 );
                 None
             }
         };
         let entry = StreamEntry {
+            session_id,
             cancelled: Arc::clone(&flag),
             sink: sink.as_ref().map(Arc::clone),
         };
@@ -130,6 +135,24 @@ impl StreamRegistry {
         guard.clear();
     }
 
+    /// 그 세션이 보유한 모든 스트림을 취소·정리 (다른 세션은 무관).
+    pub fn cancel_session(&self, session_id: uuid::Uuid) {
+        let mut guard = self.inner.lock();
+        let to_drop: Vec<String> = guard
+            .iter()
+            .filter(|(_, e)| e.session_id == session_id)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in &to_drop {
+            if let Some(entry) = guard.get(key) {
+                entry.cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        for key in to_drop {
+            guard.remove(&key); // Arc drop → ResultSink unlinks file
+        }
+    }
+
     /// 단일 스트림 등록 해제 + sink 폐기 (사용자가 결과 폐기를 명시할 때).
     pub fn drop_stream(&self, stream_id: &str) {
         self.inner.lock().remove(stream_id);
@@ -151,7 +174,8 @@ mod registry_tests {
     #[test]
     fn register_creates_sink_file_on_disk() {
         let r = StreamRegistry::new();
-        let (_flag, sink) = r.register("a");
+        let sid = uuid::Uuid::new_v4();
+        let (_flag, sink) = r.register("a", sid);
         let sink = sink.expect("sink should be created in normal environment");
         let path = sink_path(&sink);
         assert!(path.exists(), "sink file must exist after register");
@@ -160,8 +184,9 @@ mod registry_tests {
     #[test]
     fn cancel_all_unlinks_all_sink_files_when_external_refs_drop() {
         let r = StreamRegistry::new();
-        let (_, sink_a) = r.register("a");
-        let (_, sink_b) = r.register("b");
+        let sid = uuid::Uuid::new_v4();
+        let (_, sink_a) = r.register("a", sid);
+        let (_, sink_b) = r.register("b", sid);
         let path_a = sink_path(sink_a.as_ref().unwrap());
         let path_b = sink_path(sink_b.as_ref().unwrap());
         assert!(path_a.exists());
@@ -181,8 +206,9 @@ mod registry_tests {
     #[test]
     fn drop_stream_unlinks_only_that_sink() {
         let r = StreamRegistry::new();
-        let (_, sink_a) = r.register("a");
-        let (_, sink_b) = r.register("b");
+        let sid = uuid::Uuid::new_v4();
+        let (_, sink_a) = r.register("a", sid);
+        let (_, sink_b) = r.register("b", sid);
         let path_a = sink_path(sink_a.as_ref().unwrap());
         let path_b = sink_path(sink_b.as_ref().unwrap());
 
@@ -202,7 +228,8 @@ mod registry_tests {
         // (사용자가 명시적으로 cancel_stream을 호출한 경우는 commands 계층에서
         // cancel + drop_stream을 함께 부른다 — registry 단독 행위가 아님).
         let r = StreamRegistry::new();
-        let (_, sink) = r.register("a");
+        let sid = uuid::Uuid::new_v4();
+        let (_, sink) = r.register("a", sid);
         let path = sink_path(sink.as_ref().unwrap());
 
         r.cancel("a");
@@ -222,11 +249,12 @@ mod registry_tests {
         // 일괄 정리하지만, 만에 하나 같은 stream_id로 register가 두 번
         // 불려도 이전 sink가 잔존하지 않아야 한다.
         let r = StreamRegistry::new();
-        let (_, sink1) = r.register("same");
+        let sid = uuid::Uuid::new_v4();
+        let (_, sink1) = r.register("same", sid);
         let path1 = sink_path(sink1.as_ref().unwrap());
         drop(sink1);
 
-        let (_, sink2) = r.register("same");
+        let (_, sink2) = r.register("same", sid);
         let path2 = sink_path(sink2.as_ref().unwrap());
         assert_ne!(path1, path2, "second register must allocate a new sink file");
         assert!(!path1.exists(), "previous sink must be unlinked when entry is replaced");
@@ -234,6 +262,32 @@ mod registry_tests {
 
         drop(sink2);
         r.cancel_all();
+    }
+
+    #[test]
+    fn cancel_session_only_cancels_that_sessions_streams() {
+        let r = StreamRegistry::new();
+        let s1 = uuid::Uuid::new_v4();
+        let s2 = uuid::Uuid::new_v4();
+
+        let (flag_a, sink_a) = r.register("a", s1);
+        let (flag_b, sink_b) = r.register("b", s2);
+        let path_a = sink_path(sink_a.as_ref().unwrap());
+        let path_b = sink_path(sink_b.as_ref().unwrap());
+
+        drop(sink_a);
+        drop(sink_b);
+
+        r.cancel_session(s1);
+
+        assert!(flag_a.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(!flag_b.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(!path_a.exists(), "s1's sink must be unlinked");
+        assert!(path_b.exists(), "s2's sink must survive");
+
+        // cleanup
+        r.cancel_all();
+        assert!(!path_b.exists());
     }
 }
 
