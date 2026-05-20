@@ -23,4 +23,15 @@ describe("toKoreanMessage", () => {
     const out = toKoreanMessage({ kind: "weird_kind", message: "x" } as unknown);
     expect(out).toMatch(/알 수 없는/);
   });
+
+  it("session_not_found maps to Korean message", () => {
+    expect(toKoreanMessage({ kind: "session_not_found", session_id: "x", message: "no" }))
+      .toContain("세션이 만료");
+  });
+
+  it("session_limit_reached interpolates counts", () => {
+    expect(
+      toKoreanMessage({ kind: "session_limit_reached", active: 11, max: 10, message: "soft cap" } as any),
+    ).toContain("11");
+  });
 });

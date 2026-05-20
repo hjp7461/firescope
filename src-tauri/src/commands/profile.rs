@@ -127,13 +127,19 @@ pub fn delete_profile(
     state: State<'_, AppState>,
     profile_id: Uuid,
 ) -> AppResult<()> {
-    // 활성 프로파일을 지우면 세션도 함께 정리한다 (이벤트는 deactivate가 emit).
-    if state
+    // 이 프로파일을 사용하는 세션을 모두 종료한다 (이벤트는 deactivate가 emit).
+    // TOCTOU window: a new session for this profile could be created between
+    // the list() snapshot and the deactivate loop. Acceptable for delete —
+    // orphaned sessions error out on next IPC with SessionNotFound.
+    let active_sessions: Vec<Uuid> = state
         .sessions
-        .current()
-        .is_some_and(|s| s.profile_id == profile_id)
-    {
-        state.sessions.deactivate(&app)?;
+        .list()
+        .into_iter()
+        .filter(|s| s.profile_id == profile_id)
+        .map(|s| s.session_id)
+        .collect();
+    for sid in active_sessions {
+        state.sessions.deactivate(&app, sid)?;
     }
     state.profiles.delete(profile_id)?;
     // 프로파일에 종속된 로컬 데이터(쿼리 히스토리)도 함께 정리 (orphan 방지).

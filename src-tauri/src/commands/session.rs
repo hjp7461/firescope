@@ -15,6 +15,7 @@ pub struct RefreshResult {
 
 #[derive(Serialize, Clone)]
 struct TokenRefreshed {
+    session_id: Uuid,
     profile_id: Uuid,
     expires_at: DateTime<Utc>,
 }
@@ -24,6 +25,7 @@ pub async fn activate_profile(
     app: AppHandle,
     state: State<'_, AppState>,
     profile_id: Uuid,
+    session_id: Option<Uuid>,
     confirmed: Option<bool>,
 ) -> AppResult<Session> {
     state
@@ -32,27 +34,45 @@ pub async fn activate_profile(
             &app,
             &state.profiles,
             profile_id,
+            session_id,
             confirmed.unwrap_or(false),
         )
         .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn current_session(state: State<'_, AppState>) -> AppResult<Option<Session>> {
-    Ok(state.sessions.current())
+pub fn current_session(
+    state: State<'_, AppState>,
+    session_id: Uuid,
+) -> AppResult<Option<Session>> {
+    Ok(state.sessions.current(session_id))
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn deactivate(app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
-    state.sessions.deactivate(&app)
+pub fn list_sessions(state: State<'_, AppState>) -> AppResult<Vec<Session>> {
+    Ok(state.sessions.list())
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn refresh_token(app: AppHandle, state: State<'_, AppState>) -> AppResult<RefreshResult> {
-    let (profile_id, expires_at) = state.sessions.refresh_token().await?;
+pub fn deactivate(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: Uuid,
+) -> AppResult<()> {
+    state.sessions.deactivate(&app, session_id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn refresh_token(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: Uuid,
+) -> AppResult<RefreshResult> {
+    let (profile_id, expires_at) = state.sessions.refresh_token(session_id).await?;
     let _ = app.emit(
         "profile:token_refreshed",
         TokenRefreshed {
+            session_id,
             profile_id,
             expires_at,
         },

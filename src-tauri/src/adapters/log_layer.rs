@@ -9,10 +9,10 @@ use tracing_subscriber::layer::Context;
 use tracing_subscriber::Layer;
 
 /// 로그에 실어도 안전한 구조화 필드 (값 누출 방지 화이트리스트).
-/// NOTE: "message"와 "profile_id"는 record_debug에서 먼저 특별 처리되므로 여기 없어도 됨.
+/// NOTE: "message", "profile_id", "session_id"는 record_debug에서 먼저 특별 처리되므로 여기 없어도 됨.
 const ALLOWED: &[&str] = &[
     "message", "collection", "count", "took_ms",
-    "expires_at", "target", "stream_id", "op", "mode",
+    "expires_at", "target", "stream_id", "session_id", "op", "mode",
 ];
 
 #[derive(Serialize, Clone)]
@@ -23,12 +23,15 @@ struct LogEntry {
     ts: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
 }
 
 #[derive(Default)]
 struct FieldVisitor {
     message: String,
     profile_id: Option<String>,
+    session_id: Option<String>,
     extra: Vec<String>,
 }
 
@@ -42,6 +45,9 @@ impl FieldVisitor {
         } else if name == "profile_id" {
             let v = format!("{value:?}");
             self.profile_id = Some(v.trim_matches('"').to_string());
+        } else if name == "session_id" {
+            let v = format!("{value:?}");
+            self.session_id = Some(v.trim_matches('"').to_string());
         } else if ALLOWED.contains(&name) {
             let v = format!("{value:?}");
             self.extra.push(format!("{name}={}", v.trim_matches('"')));
@@ -79,6 +85,7 @@ fn render(meta_level: &tracing::Level, target: &str, v: FieldVisitor) -> LogEntr
         target: target.to_string(),
         ts: Utc::now().to_rfc3339(),
         profile_id: v.profile_id,
+        session_id: v.session_id,
     }
 }
 
@@ -104,12 +111,23 @@ mod tests {
         let v = FieldVisitor {
             message: "query done".into(),
             profile_id: Some("p1".into()),
+            session_id: Some("s-1".into()),
             extra: vec!["count=30".into(), "took_ms=12".into()],
         };
         let e = render(&tracing::Level::INFO, "firescope::q", v);
         assert_eq!(e.level, "info");
         assert_eq!(e.message, "query done (count=30 took_ms=12)");
         assert_eq!(e.profile_id.as_deref(), Some("p1"));
+        assert_eq!(e.session_id.as_deref(), Some("s-1"));
+    }
+
+    #[test]
+    fn session_id_field_is_captured() {
+        let mut v = FieldVisitor::default();
+        v.put_field("session_id", &"s-123");
+        assert_eq!(v.session_id.as_deref(), Some("s-123"));
+        // session_id must NOT appear in extra (it's promoted to a struct field)
+        assert!(v.extra.iter().all(|s| !s.contains("s-123")));
     }
 
     #[test]

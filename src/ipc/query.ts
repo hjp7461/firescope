@@ -1,6 +1,7 @@
 // 컬렉션/문서/쿼리/히스토리 IPC 래퍼 (`docs/03-ipc-contract.md` §3·§4·§8).
 
 import { call } from "./index";
+import { requireSessionIdForIpc } from "./session";
 import type {
   ComputeStatsParams,
   ExportFormat,
@@ -14,17 +15,29 @@ import type {
 } from "@/types";
 
 export const listCollections = () =>
-  call<string[]>("list_collections");
+  call<string[]>("list_collections", {
+    session_id: requireSessionIdForIpc(),
+  });
 
 export const listSubcollections = (documentPath: string) =>
-  call<string[]>("list_subcollections", { document_path: documentPath });
+  call<string[]>("list_subcollections", {
+    session_id: requireSessionIdForIpc(),
+    document_path: documentPath,
+  });
 
 export const getDocument = (path: string) =>
-  call<FirestoreDocument | null>("get_document", { path });
+  call<FirestoreDocument | null>("get_document", {
+    session_id: requireSessionIdForIpc(),
+    path,
+  });
 
 /** 즉시 반환 — 결과는 `query:chunk|done|error:<stream_id>` 이벤트로. */
 export const queryDocuments = (streamId: string, dsl: QueryDsl) =>
-  call<void>("query_documents", { stream_id: streamId, dsl });
+  call<void>("query_documents", {
+    session_id: requireSessionIdForIpc(),
+    stream_id: streamId,
+    dsl,
+  });
 
 export const cancelStream = (streamId: string) =>
   call<void>("cancel_stream", { stream_id: streamId });
@@ -39,12 +52,18 @@ export const exportResult = (params: {
 }) => call<ExportResultResponse>("export_result", { params });
 
 export const queryCount = (dsl: QueryDsl) =>
-  call<QueryCountResponse>("query_count", { dsl });
+  call<QueryCountResponse>("query_count", {
+    session_id: requireSessionIdForIpc(),
+    dsl,
+  });
 
 // --- Phase 9: 컬렉션 통계 (`docs/03-ipc-contract.md` §5 v0.7) ---
 
 export const computeStats = (params: ComputeStatsParams) =>
-  call<StatsReport>("compute_stats", { params });
+  call<StatsReport>("compute_stats", {
+    session_id: requireSessionIdForIpc(),
+    params,
+  });
 
 // --- 쿼리 히스토리 (`docs/03-ipc-contract.md` §8) ---
 

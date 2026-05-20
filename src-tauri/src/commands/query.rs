@@ -26,8 +26,11 @@ use crate::query::{post_filter, translate, validate};
 use crate::state::AppState;
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn list_collections(state: State<'_, AppState>) -> AppResult<Vec<String>> {
-    let client = state.sessions.firestore()?;
+pub async fn list_collections(
+    state: State<'_, AppState>,
+    session_id: Uuid,
+) -> AppResult<Vec<String>> {
+    let client = state.sessions.firestore(session_id)?;
     let res = client
         .db
         .list_collection_ids(FirestoreListCollectionIdsParams::new())
@@ -41,9 +44,10 @@ pub async fn list_collections(state: State<'_, AppState>) -> AppResult<Vec<Strin
 #[tauri::command(rename_all = "snake_case")]
 pub async fn list_subcollections(
     state: State<'_, AppState>,
+    session_id: Uuid,
     document_path: String,
 ) -> AppResult<Vec<String>> {
-    let client = state.sessions.firestore()?;
+    let client = state.sessions.firestore(session_id)?;
     let parent = format!("{}/{document_path}", client.db.get_documents_path());
     let mut params = FirestoreListCollectionIdsParams::new();
     params.parent = Some(parent);
@@ -58,8 +62,12 @@ pub async fn list_subcollections(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn get_document(state: State<'_, AppState>, path: String) -> AppResult<Option<Document>> {
-    let client = state.sessions.firestore()?;
+pub async fn get_document(
+    state: State<'_, AppState>,
+    session_id: Uuid,
+    path: String,
+) -> AppResult<Option<Document>> {
+    let client = state.sessions.firestore(session_id)?;
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if segments.is_empty() || segments.len() % 2 != 0 {
         return Err(AppError::InvalidQuery {
@@ -95,17 +103,18 @@ pub async fn get_document(state: State<'_, AppState>, path: String) -> AppResult
 pub async fn query_documents(
     app: AppHandle,
     state: State<'_, AppState>,
+    session_id: Uuid,
     stream_id: String,
     dsl: QueryDsl,
 ) -> AppResult<()> {
-    let client = state.sessions.firestore()?;
+    let client = state.sessions.firestore(session_id)?;
     let registry = Arc::clone(state.sessions.streams());
     // 새 쿼리가 시작되면 이전 stream들의 sink를 정리한다 (원칙 5 — 운영 데이터를
     // 디스크에 오래 두지 않음). 사용자가 export하지 않으면 자동 폐기.
     registry.cancel_all();
-    let (_flag, sink) = registry.register(&stream_id);
+    let (_flag, sink) = registry.register(&stream_id, session_id);
     // 즉시 반환, 결과는 이벤트로 (원칙 6).
-    tokio::spawn(run_query(app, client, registry, sink, stream_id, dsl));
+    tokio::spawn(run_query(app, client, registry, sink, stream_id, session_id, dsl));
     Ok(())
 }
 
@@ -189,9 +198,10 @@ pub struct QueryCountResponse {
 #[tauri::command(rename_all = "snake_case")]
 pub async fn query_count(
     state: State<'_, AppState>,
+    session_id: Uuid,
     dsl: QueryDsl,
 ) -> AppResult<QueryCountResponse> {
-    let client = state.sessions.firestore()?;
+    let client = state.sessions.firestore(session_id)?;
     validate(&dsl)?;
     let params = translate(&dsl)?;
     let matcher = dsl
@@ -245,8 +255,11 @@ const DEFAULT_TOP_SAMPLES: usize = 5;
 #[tauri::command(rename_all = "snake_case")]
 pub fn compute_stats(
     state: State<'_, AppState>,
+    session_id: Uuid,
     params: ComputeStatsParams,
 ) -> AppResult<StatsReport> {
+    // session_id로 세션 존재 여부를 검증한다 (접근 게이트).
+    let _ = state.sessions.firestore(session_id)?;
     let streams = state.sessions.streams();
     let sink = streams
         .sink(&params.stream_id)
