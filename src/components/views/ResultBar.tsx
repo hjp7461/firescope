@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ModeIcon } from "@/components/profile/mode";
 import { useResultStore } from "@/stores/resultStore";
+import { useViewStore } from "@/stores/viewStore";
 import { exportResult, queryCount } from "@/ipc/query";
 import { asAppError, type ExportFormat, type ExportSource, type ProfileMode } from "@/types";
 import { ViewTabs } from "./ViewTabs";
@@ -40,7 +41,11 @@ export function ResultBar({
   const cancel = useResultStore((s) => s.cancel);
   const streamId = useResultStore((s) => s.streamId);
   const lastDsl = useResultStore((s) => s.lastDsl);
+  const activeView = useViewStore((s) => s.activeView);
   const hasPostFilter = lastDsl?.post_filter != null;
+  // Log 뷰는 자체 [복사] 버튼이 헤더에 있으므로 ResultBar의 결과 액션을 숨긴다
+  // (보이는 데이터와 복사 대상이 어긋나는 혼동 방지).
+  const showResultActions = activeView !== "log";
   const [busy, setBusy] = useState<"export" | "count" | "copy" | null>(null);
 
   const doExport = async (format: ExportFormat, source: ExportSource) => {
@@ -146,30 +151,32 @@ export function ResultBar({
                 : `${total}건`}
               {tookMs != null ? ` · ${tookMs}ms` : ""}
             </span>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="h-7 gap-1 px-2 text-xs"
-              disabled={!canCopy || busy != null}
-              onClick={() => void doCopy()}
-              title="결과를 JSON으로 클립보드에 복사"
-            >
-              <ClipboardCopy className="size-3.5" />
-              복사
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="h-7 gap-1 px-2 text-xs"
-              disabled={!canCount || busy != null}
-              onClick={() => void doCount()}
-              title="DSL을 다시 실행하여 카운트 계산"
-            >
-              <Calculator className="size-3.5" />
-              카운트
-            </Button>
+            {showResultActions && (
+              <>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 gap-1 px-2 text-xs"
+                  disabled={!canCopy || busy != null}
+                  onClick={() => void doCopy()}
+                  title="결과를 JSON으로 클립보드에 복사"
+                >
+                  <ClipboardCopy className="size-3.5" />
+                  복사
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 gap-1 px-2 text-xs"
+                  disabled={!canCount || busy != null}
+                  onClick={() => void doCount()}
+                  title="DSL을 다시 실행하여 카운트 계산"
+                >
+                  <Calculator className="size-3.5" />
+                  카운트
+                </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -216,6 +223,8 @@ export function ResultBar({
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
+              </>
+            )}
           </>
         )}
         {status === "error" && (
