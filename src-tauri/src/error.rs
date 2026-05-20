@@ -51,6 +51,19 @@ pub enum AppError {
 
     #[error("duplicate profile")]
     DuplicateProfile { message: String },
+
+    #[error("session not found")]
+    SessionNotFound {
+        session_id: uuid::Uuid,
+        message: String,
+    },
+
+    #[error("session limit reached: {active}/{max}")]
+    SessionLimitReached {
+        active: usize,
+        max: usize,
+        message: String,
+    },
 }
 
 impl AppError {
@@ -97,5 +110,46 @@ impl AppError {
         Self::VaultError {
             message: context.into(),
         }
+    }
+
+    pub fn session_not_found(session_id: uuid::Uuid, message: impl Into<String>) -> Self {
+        Self::SessionNotFound {
+            session_id,
+            message: message.into(),
+        }
+    }
+
+    pub fn session_limit_reached(active: usize, max: usize, message: impl Into<String>) -> Self {
+        Self::SessionLimitReached {
+            active,
+            max,
+            message: message.into(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod multi_tab_error_tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn session_not_found_serializes_with_kind_tag() {
+        let id = Uuid::nil();
+        let err = AppError::session_not_found(id, "no such session");
+        let json = serde_json::to_value(&err).unwrap();
+        assert_eq!(json["kind"], "session_not_found");
+        assert_eq!(json["session_id"], id.to_string());
+        assert_eq!(json["message"], "no such session");
+    }
+
+    #[test]
+    fn session_limit_reached_serializes_with_counts() {
+        let err = AppError::session_limit_reached(11, 10, "soft cap reached");
+        let json = serde_json::to_value(&err).unwrap();
+        assert_eq!(json["kind"], "session_limit_reached");
+        assert_eq!(json["active"], 11);
+        assert_eq!(json["max"], 10);
+        assert_eq!(json["message"], "soft cap reached");
     }
 }
