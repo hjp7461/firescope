@@ -1,7 +1,13 @@
 // 컬렉션/문서/쿼리/히스토리 IPC 래퍼 (`docs/03-ipc-contract.md` §3·§4·§8).
 
 import { call } from "./index";
-import { requireSessionIdForIpc } from "./session";
+import { getActiveSessionId } from "@/stores/tabsStore";
+
+function requireActiveSessionId(): string {
+  const id = getActiveSessionId();
+  if (!id) throw new Error("no active session — activate a profile first");
+  return id;
+}
 import type {
   ComputeStatsParams,
   ExportFormat,
@@ -16,25 +22,25 @@ import type {
 
 export const listCollections = () =>
   call<string[]>("list_collections", {
-    session_id: requireSessionIdForIpc(),
+    session_id: requireActiveSessionId(),
   });
 
 export const listSubcollections = (documentPath: string) =>
   call<string[]>("list_subcollections", {
-    session_id: requireSessionIdForIpc(),
+    session_id: requireActiveSessionId(),
     document_path: documentPath,
   });
 
 export const getDocument = (path: string) =>
   call<FirestoreDocument | null>("get_document", {
-    session_id: requireSessionIdForIpc(),
+    session_id: requireActiveSessionId(),
     path,
   });
 
 /** 즉시 반환 — 결과는 `query:chunk|done|error:<stream_id>` 이벤트로. */
 export const queryDocuments = (streamId: string, dsl: QueryDsl) =>
   call<void>("query_documents", {
-    session_id: requireSessionIdForIpc(),
+    session_id: requireActiveSessionId(),
     stream_id: streamId,
     dsl,
   });
@@ -53,7 +59,7 @@ export const exportResult = (params: {
 
 export const queryCount = (dsl: QueryDsl) =>
   call<QueryCountResponse>("query_count", {
-    session_id: requireSessionIdForIpc(),
+    session_id: requireActiveSessionId(),
     dsl,
   });
 
@@ -61,7 +67,7 @@ export const queryCount = (dsl: QueryDsl) =>
 
 export const computeStats = (params: ComputeStatsParams) =>
   call<StatsReport>("compute_stats", {
-    session_id: requireSessionIdForIpc(),
+    session_id: requireActiveSessionId(),
     params,
   });
 

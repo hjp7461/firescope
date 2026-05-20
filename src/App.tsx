@@ -125,7 +125,10 @@ function App() {
 
   async function doActivate(p: ProfileMeta, confirmed: boolean) {
     try {
-      await activateProfile(p.id, confirmed);
+      const newSession = await activateProfile(p.id, confirmed);
+      // profile:activated 이벤트보다 먼저 즉시 attach — race-free 보장.
+      const tabId = useTabsStore.getState().activeTabId;
+      if (tabId) useTabsStore.getState().setSession(tabId, newSession);
       toast.success(`${p.name} 활성화됨`);
     } catch (err) {
       const e = asAppError(err);
