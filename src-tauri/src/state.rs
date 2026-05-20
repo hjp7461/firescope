@@ -56,7 +56,17 @@ impl StreamRegistry {
     ) {
         let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let sink = match ResultSink::new() {
-            Ok(s) => Some(Arc::new(parking_lot::Mutex::new(s))),
+            Ok(s) => {
+                // sink path를 debug 레벨로 노출 — 수동 lifecycle 검증용
+                // (cancel_all/Drop 시점에 ls로 unlink 확인 가능).
+                tracing::debug!(
+                    target: "query",
+                    stream_id = %stream_id,
+                    sink_path = %s.path().display(),
+                    "result sink created"
+                );
+                Some(Arc::new(parking_lot::Mutex::new(s)))
+            }
             Err(e) => {
                 tracing::warn!(
                     target: "query",
@@ -123,6 +133,107 @@ impl StreamRegistry {
     /// 단일 스트림 등록 해제 + sink 폐기 (사용자가 결과 폐기를 명시할 때).
     pub fn drop_stream(&self, stream_id: &str) {
         self.inner.lock().remove(stream_id);
+    }
+}
+
+#[cfg(test)]
+mod registry_tests {
+    //! Sink lifecycle 통합 검증: ResultSink::Drop이 unlink하는 것은
+    //! sink 단위 테스트가 커버한다. 여기서는 *레지스트리 레벨*에서
+    //! Arc 수명 관리가 올바른지 — 즉 cancel_all/drop_stream/replacement
+    //! 시점에 실제 임시 파일이 사라지는지 — 를 확인한다 (원칙 5).
+    use super::*;
+
+    fn sink_path(arc: &Arc<parking_lot::Mutex<crate::firestore::ResultSink>>) -> std::path::PathBuf {
+        arc.lock().path().to_path_buf()
+    }
+
+    #[test]
+    fn register_creates_sink_file_on_disk() {
+        let r = StreamRegistry::new();
+        let (_flag, sink) = r.register("a");
+        let sink = sink.expect("sink should be created in normal environment");
+        let path = sink_path(&sink);
+        assert!(path.exists(), "sink file must exist after register");
+    }
+
+    #[test]
+    fn cancel_all_unlinks_all_sink_files_when_external_refs_drop() {
+        let r = StreamRegistry::new();
+        let (_, sink_a) = r.register("a");
+        let (_, sink_b) = r.register("b");
+        let path_a = sink_path(sink_a.as_ref().unwrap());
+        let path_b = sink_path(sink_b.as_ref().unwrap());
+        assert!(path_a.exists());
+        assert!(path_b.exists());
+
+        // 외부(=command)가 보유한 Arc 해제 — 실제 큐에서는 streaming task가
+        // 끝나면서 자연스럽게 drop된다.
+        drop(sink_a);
+        drop(sink_b);
+        // registry 내부 Arc 해제 — 마지막 참조가 사라지면서 ResultSink::Drop 실행.
+        r.cancel_all();
+
+        assert!(!path_a.exists(), "cancel_all must unlink sink_a");
+        assert!(!path_b.exists(), "cancel_all must unlink sink_b");
+    }
+
+    #[test]
+    fn drop_stream_unlinks_only_that_sink() {
+        let r = StreamRegistry::new();
+        let (_, sink_a) = r.register("a");
+        let (_, sink_b) = r.register("b");
+        let path_a = sink_path(sink_a.as_ref().unwrap());
+        let path_b = sink_path(sink_b.as_ref().unwrap());
+
+        drop(sink_a);
+        r.drop_stream("a");
+
+        assert!(!path_a.exists(), "drop_stream(a) must unlink sink_a");
+        assert!(path_b.exists(), "sink_b must remain");
+        // 정리
+        drop(sink_b);
+        r.cancel_all();
+    }
+
+    #[test]
+    fn cancel_only_does_not_unlink_sink() {
+        // export 가능성을 위해 cancel 자체로는 sink가 남아야 한다
+        // (사용자가 명시적으로 cancel_stream을 호출한 경우는 commands 계층에서
+        // cancel + drop_stream을 함께 부른다 — registry 단독 행위가 아님).
+        let r = StreamRegistry::new();
+        let (_, sink) = r.register("a");
+        let path = sink_path(sink.as_ref().unwrap());
+
+        r.cancel("a");
+        assert!(path.exists(), "cancel alone must keep sink available for export");
+        assert!(r.is_cancelled("a"));
+        assert!(r.sink("a").is_some(), "sink handle must still be retrievable");
+
+        // 정리
+        drop(sink);
+        r.cancel_all();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn re_register_same_id_replaces_previous_sink() {
+        // commands/query.rs::query_documents는 새 쿼리 시작 시 cancel_all로
+        // 일괄 정리하지만, 만에 하나 같은 stream_id로 register가 두 번
+        // 불려도 이전 sink가 잔존하지 않아야 한다.
+        let r = StreamRegistry::new();
+        let (_, sink1) = r.register("same");
+        let path1 = sink_path(sink1.as_ref().unwrap());
+        drop(sink1);
+
+        let (_, sink2) = r.register("same");
+        let path2 = sink_path(sink2.as_ref().unwrap());
+        assert_ne!(path1, path2, "second register must allocate a new sink file");
+        assert!(!path1.exists(), "previous sink must be unlinked when entry is replaced");
+        assert!(path2.exists());
+
+        drop(sink2);
+        r.cancel_all();
     }
 }
 

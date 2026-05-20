@@ -1,9 +1,11 @@
 import { useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { toast } from "sonner";
 import { useLogStore } from "@/stores/logStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { cn } from "@/lib/utils";
-import type { LogLevel } from "@/types";
+import { asAppError, type LogEntry, type LogLevel } from "@/types";
 
 const LEVELS: LogLevel[] = ["error", "warn", "info", "debug"];
 const COLOR: Record<LogLevel, string> = {
@@ -67,8 +69,17 @@ export function LogView() {
         </label>
         <button
           type="button"
+          onClick={() => void copyVisible(filtered)}
+          disabled={filtered.length === 0}
+          className="ml-auto rounded px-1.5 py-0.5 text-muted-foreground hover:bg-accent disabled:opacity-50"
+          title="화면에 보이는 로그를 텍스트로 클립보드 복사"
+        >
+          복사 ({filtered.length})
+        </button>
+        <button
+          type="button"
           onClick={clear}
-          className="ml-auto rounded px-1.5 py-0.5 text-muted-foreground hover:bg-accent"
+          className="rounded px-1.5 py-0.5 text-muted-foreground hover:bg-accent"
         >
           지우기
         </button>
@@ -104,4 +115,22 @@ export function LogView() {
       </div>
     </div>
   );
+}
+
+/** 화면에 보이는 로그를 사람이 읽기 좋은 텍스트로 클립보드에 복사. */
+async function copyVisible(entries: LogEntry[]): Promise<void> {
+  if (entries.length === 0) return;
+  const text = entries.map(formatLogLine).join("\n");
+  try {
+    await writeText(text);
+    toast.success(`${entries.length.toLocaleString()}개 로그 복사`);
+  } catch (err) {
+    toast.error(asAppError(err).message);
+  }
+}
+
+/** LogView가 화면에 표시하는 컬럼 + 메시지를 한 줄로 직렬화. */
+export function formatLogLine(e: LogEntry): string {
+  const time = e.ts.slice(11, 19);
+  return `${time} ${e.level.toUpperCase().padEnd(5)} ${e.message}`;
 }
