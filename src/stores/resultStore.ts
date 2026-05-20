@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { cancelStream, queryDocuments } from "@/ipc/query";
-import { getActiveSession } from "@/stores/tabsStore";
+import { getActiveSession, useTabsStore, type TabId } from "@/stores/tabsStore";
 import { useHistoryStore } from "@/stores/historyStore";
 import {
   type FirestoreDocument,
@@ -14,10 +14,9 @@ import { toKoreanMessage } from "@/lib/errorMessages";
 
 type Status = "idle" | "streaming" | "done" | "error";
 
-type ResultState = {
+export type ResultSlice = {
   streamId: string | null;
   collectionPath: string | null;
-  /** 직전 실행한 DSL (히스토리 기록·재실행용). */
   lastDsl: QueryDsl | null;
   rows: FirestoreDocument[];
   status: Status;
@@ -25,31 +24,10 @@ type ResultState = {
   scanned: number;
   tookMs: number | null;
   error: string | null;
-  /** Phase 8-A: Firestore 누락 인덱스 안내 URL (있을 때만). */
   indexUrl: string | null;
-  runCollectionQuery: (path: string) => Promise<void>;
-  runDsl: (dsl: QueryDsl) => Promise<void>;
-  cancel: () => Promise<void>;
-  reset: () => void;
 };
 
-/** dsl.target → ResultBar 표시용 라벨. */
-function targetLabel(dsl: QueryDsl): string {
-  return dsl.target.kind === "collection"
-    ? dsl.target.path
-    : `group:${dsl.target.id}`;
-}
-
-// 이벤트 unlisten 핸들은 store 밖(모듈 스코프)에 둔다 — 직렬화 대상 아님.
-let unlisteners: UnlistenFn[] = [];
-
-async function teardown() {
-  const fns = unlisteners;
-  unlisteners = [];
-  await Promise.all(fns.map((f) => f()));
-}
-
-export const useResultStore = create<ResultState>((set, get) => ({
+const EMPTY_SLICE: ResultSlice = {
   streamId: null,
   collectionPath: null,
   lastDsl: null,
@@ -60,79 +38,141 @@ export const useResultStore = create<ResultState>((set, get) => ({
   tookMs: null,
   error: null,
   indexUrl: null,
+};
+
+type ResultState = ResultSlice & {
+  byTab: Map<TabId, ResultSlice>;
+  runCollectionQuery: (path: string) => Promise<void>;
+  runDsl: (dsl: QueryDsl) => Promise<void>;
+  cancel: () => Promise<void>;
+  reset: () => void;
+
+  __resetForTests: () => void;
+  __setSliceForTest: (tabId: TabId, slice: ResultSlice) => void;
+  __registerStreamForTest: (streamId: string, tabId: TabId) => void;
+  __getTabForStream: (streamId: string) => TabId | undefined;
+};
+
+/** dsl.target → ResultBar 표시용 라벨. */
+function targetLabel(dsl: QueryDsl): string {
+  return dsl.target.kind === "collection"
+    ? dsl.target.path
+    : `group:${dsl.target.id}`;
+}
+
+// 이벤트 unlisten 핸들은 store 밖(모듈 스코프)에 둔다 — 직렬화 대상 아님.
+// stream-id별로 unlisten을 추적하여 다중 in-flight 스트림 가능.
+const streamIdToTab = new Map<string, TabId>();
+const unlisteners = new Map<string, UnlistenFn[]>();
+
+async function teardownStream(streamId: string) {
+  const fns = unlisteners.get(streamId) ?? [];
+  unlisteners.delete(streamId);
+  streamIdToTab.delete(streamId);
+  await Promise.all(fns.map((f) => f()));
+}
+
+function setSlice(
+  state: ResultState,
+  tabId: TabId,
+  patch: Partial<ResultSlice>,
+): ResultState {
+  const prev = state.byTab.get(tabId) ?? EMPTY_SLICE;
+  const next: ResultSlice = { ...prev, ...patch };
+  const map = new Map(state.byTab);
+  map.set(tabId, next);
+  const isActive = useTabsStore.getState().activeTabId === tabId;
+  return isActive
+    ? { ...state, ...next, byTab: map }
+    : { ...state, byTab: map };
+}
+
+export const useResultStore = create<ResultState>((set, get) => ({
+  ...EMPTY_SLICE,
+  byTab: new Map(),
 
   reset: () => {
-    void teardown();
-    set({
-      streamId: null,
-      collectionPath: null,
-      lastDsl: null,
-      rows: [],
-      status: "idle",
-      total: 0,
-      scanned: 0,
-      tookMs: null,
-      error: null,
-      indexUrl: null,
-    });
+    const tabId = useTabsStore.getState().activeTabId;
+    if (!tabId) return;
+    const sid = get().byTab.get(tabId)?.streamId;
+    if (sid) void teardownStream(sid);
+    set((s) => setSlice(s, tabId, { ...EMPTY_SLICE }));
   },
 
   runDsl: async (dsl) => {
-    await teardown();
+    const tabId = useTabsStore.getState().activeTabId;
+    if (!tabId) return;
+    const prevStreamId = get().byTab.get(tabId)?.streamId;
+    if (prevStreamId) await teardownStream(prevStreamId);
+
     const streamId = crypto.randomUUID();
-    set({
-      streamId,
-      collectionPath: targetLabel(dsl),
-      lastDsl: dsl,
-      rows: [],
-      status: "streaming",
-      total: 0,
-      scanned: 0,
-      tookMs: null,
-      error: null,
-      indexUrl: null,
-    });
+    streamIdToTab.set(streamId, tabId);
+    set((s) =>
+      setSlice(s, tabId, {
+        streamId,
+        collectionPath: targetLabel(dsl),
+        lastDsl: dsl,
+        rows: [],
+        status: "streaming",
+        total: 0,
+        scanned: 0,
+        tookMs: null,
+        error: null,
+        indexUrl: null,
+      }),
+    );
 
     // stream_id별 동적 이벤트 구독 (시작 전에 걸어 청크 유실 방지).
-    unlisteners = await Promise.all([
+    const dynamicListeners = await Promise.all([
       listen<QueryChunk>(`query:chunk:${streamId}`, (e) => {
-        if (get().streamId !== streamId) return;
-        set((s) => ({ rows: [...s.rows, ...e.payload.docs] }));
+        const owner = streamIdToTab.get(streamId);
+        if (!owner) return;
+        const prev = get().byTab.get(owner)?.rows ?? [];
+        set((s) =>
+          setSlice(s, owner, { rows: [...prev, ...e.payload.docs] }),
+        );
       }),
       listen<QueryDone>(`query:done:${streamId}`, (e) => {
-        if (get().streamId !== streamId) return;
-        set({
-          status: "done",
-          total: e.payload.total,
-          scanned: e.payload.scanned,
-          tookMs: e.payload.took_ms,
-        });
+        const owner = streamIdToTab.get(streamId);
+        if (!owner) return;
+        set((s) =>
+          setSlice(s, owner, {
+            status: "done",
+            total: e.payload.total,
+            scanned: e.payload.scanned,
+            tookMs: e.payload.took_ms,
+          }),
+        );
         // 성공한 쿼리만 활성 프로파일 히스토리에 기록 (격리).
         const profileId = getActiveSession()?.profile_id;
-        const ranDsl = get().lastDsl;
+        const ranDsl = get().byTab.get(owner)?.lastDsl;
         if (profileId && ranDsl) {
           void useHistoryStore
             .getState()
             .record(profileId, ranDsl, e.payload.took_ms, e.payload.total);
         }
-        void teardown();
+        void teardownStream(streamId);
       }),
       listen<QueryErrorPayload>(`query:error:${streamId}`, (e) => {
-        if (get().streamId !== streamId) return;
-        set({
-          status: "error",
-          error: toKoreanMessage(e.payload),
-          indexUrl: e.payload.index_url ?? null,
-        });
-        void teardown();
+        const owner = streamIdToTab.get(streamId);
+        if (!owner) return;
+        set((s) =>
+          setSlice(s, owner, {
+            status: "error",
+            error: toKoreanMessage(e.payload),
+            indexUrl: e.payload.index_url ?? null,
+          }),
+        );
+        void teardownStream(streamId);
       }),
     ]);
+    unlisteners.set(streamId, dynamicListeners);
 
     try {
       await queryDocuments(streamId, dsl);
     } catch (err) {
-      set({ status: "error", error: toKoreanMessage(err) });
-      await teardown();
+      set((s) => setSlice(s, tabId, { status: "error", error: toKoreanMessage(err) }));
+      await teardownStream(streamId);
     }
   },
 
@@ -141,13 +181,37 @@ export const useResultStore = create<ResultState>((set, get) => ({
   },
 
   cancel: async () => {
-    const id = get().streamId;
-    if (!id) return;
+    const tabId = useTabsStore.getState().activeTabId;
+    if (!tabId) return;
+    const sid = get().byTab.get(tabId)?.streamId;
+    if (!sid) return;
     try {
-      await cancelStream(id);
+      await cancelStream(sid);
     } finally {
-      set({ status: "done" });
-      await teardown();
+      set((s) => setSlice(s, tabId, { status: "done" }));
+      await teardownStream(sid);
     }
   },
+
+  __resetForTests: () => {
+    streamIdToTab.clear();
+    unlisteners.clear();
+    set({ ...EMPTY_SLICE, byTab: new Map() });
+  },
+  __setSliceForTest: (tabId, slice) => {
+    set((s) => setSlice(s, tabId, slice));
+  },
+  __registerStreamForTest: (streamId, tabId) => {
+    streamIdToTab.set(streamId, tabId);
+  },
+  __getTabForStream: (streamId) => streamIdToTab.get(streamId),
 }));
+
+// 활성 탭 변경 시 top-level 미러 동기화 (Zustand subscribe — 기본 형식)
+useTabsStore.subscribe((s, prev) => {
+  if (s.activeTabId === prev.activeTabId) return;
+  const slice = s.activeTabId
+    ? useResultStore.getState().byTab.get(s.activeTabId) ?? EMPTY_SLICE
+    : EMPTY_SLICE;
+  useResultStore.setState(slice);
+});
