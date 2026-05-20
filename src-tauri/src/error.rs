@@ -60,8 +60,8 @@ pub enum AppError {
 
     #[error("session limit reached: {active}/{max}")]
     SessionLimitReached {
-        active: usize,
-        max: usize,
+        active: u32,
+        max: u32,
         message: String,
     },
 }
@@ -112,6 +112,7 @@ impl AppError {
         }
     }
 
+    /// 세션 ID는 UUID만 전달한다. 토큰/자격증명 조각을 session_id 인자로 전달하지 않는다.
     pub fn session_not_found(session_id: uuid::Uuid, message: impl Into<String>) -> Self {
         Self::SessionNotFound {
             session_id,
@@ -119,7 +120,7 @@ impl AppError {
         }
     }
 
-    pub fn session_limit_reached(active: usize, max: usize, message: impl Into<String>) -> Self {
+    pub fn session_limit_reached(active: u32, max: u32, message: impl Into<String>) -> Self {
         Self::SessionLimitReached {
             active,
             max,
