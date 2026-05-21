@@ -31,6 +31,23 @@ export const listSubcollections = (documentPath: string) =>
     document_path: documentPath,
   });
 
+export interface ListCollectionDocIdsResponse {
+  doc_ids: string[];
+  page_token?: string;
+}
+
+/** 컬렉션 내 문서 ID만 가볍게 조회 (트리 네비게이션용). */
+export const listCollectionDocIds = (params: {
+  collection_id: string;
+  parent_path?: string;
+  page_size?: number;
+  page_token?: string;
+}) =>
+  call<ListCollectionDocIdsResponse>("list_collection_doc_ids", {
+    session_id: requireActiveSessionId(),
+    ...params,
+  });
+
 export const getDocument = (path: string) =>
   call<FirestoreDocument | null>("get_document", {
     session_id: requireActiveSessionId(),

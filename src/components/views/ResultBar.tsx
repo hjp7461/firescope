@@ -151,7 +151,10 @@ export function ResultBar({
   };
 
   return (
-    <div className="flex items-center gap-3 border-b px-3 py-1.5 text-xs">
+    <div className="border-b">
+      {/* 우측 패딩은 `App.tsx`의 `absolute right-2 top-10` ThemeToggle(size-7)이
+          이 줄 위로 떠 있어 액션들과 겹치는 걸 방지하기 위함이다. */}
+      <div className="flex items-center gap-3 py-1.5 pl-3 pr-12 text-xs">
       <Button
         type="button"
         size="sm"
@@ -166,13 +169,12 @@ export function ResultBar({
       <span className="h-4 w-px bg-border" />
       <ViewTabs />
       <span className="h-4 w-px bg-border" />
-      <ModeIcon mode={mode} className="size-4 text-muted-foreground" />
-      <span className="text-muted-foreground">{projectId}</span>
-      {path && (
-        <span className="font-medium">
-          / {path}
-        </span>
-      )}
+      {/* 프로젝트 chip — 빌더 상태와 무관하게 좌측 고정. path는 빌더 안 input
+          또는 아래 path 라인이 담당. */}
+      <span className="flex items-center gap-1.5 rounded-md border bg-muted/40 px-2 py-0.5 text-muted-foreground">
+        <ModeIcon mode={mode} className="size-3.5" />
+        <span className="font-medium text-foreground">{projectId}</span>
+      </span>
       <span className="ml-auto flex items-center gap-3">
         {showResultActions && canToggleListener && (
           <Button
@@ -335,6 +337,17 @@ export function ResultBar({
           </span>
         )}
       </span>
+      </div>
+      {/* 빌더가 닫혀 있을 때만 path를 풀폭 한 줄로 노출. 빌더가 열려 있으면
+          빌더 안 collection input이 path를 표시·편집하므로 중복을 피한다. */}
+      {!builderOpen && path && (
+        <div
+          className="truncate border-t px-3 py-1 font-mono text-xs text-foreground"
+          title={path}
+        >
+          {path}
+        </div>
+      )}
       <StatsDialog open={statsOpen} onOpenChange={setStatsOpen} />
     </div>
   );
