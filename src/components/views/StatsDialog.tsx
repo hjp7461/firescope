@@ -120,7 +120,7 @@ export function StatsDialog({ open, onOpenChange }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col sm:max-w-3xl">
+      <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col overflow-hidden sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <BarChart3 className="size-5" />

@@ -128,6 +128,14 @@ export function ResultBar({
   const canStats = status === "done" && streamId != null && rows > 0;
   const isListening = listenerId != null;
   const canToggleListener = isListening || (lastDsl != null && lastDsl.target != null);
+  // 페이지네이션이 일어났는지 가늠 — sink(통계/내보내기)는 직전 페이지만
+  // 보관하므로 fetchMore 이후 사용 시 안내가 필요하다. 복사/카운트는 영향
+  // 없음(복사는 표시된 rows 전체, 카운트는 백엔드에서 페이지네이션 필드를
+  // 무시하고 전체 스캔).
+  const paginated = rows > (lastDsl?.limit ?? Number.POSITIVE_INFINITY);
+  const sinkPaginatedNote = paginated
+    ? "\n(페이지네이션 후에는 직전 페이지 기준)"
+    : "";
 
   const toggleListener = async () => {
     if (isListening) {
@@ -254,7 +262,7 @@ export function ResultBar({
                   className="h-7 gap-1 px-2 text-xs"
                   disabled={!canCount || busy != null}
                   onClick={() => void doCount()}
-                  title="DSL을 다시 실행하여 카운트 계산"
+                  title="DSL을 다시 실행하여 전체 카운트 계산 (페이지네이션 필드 무시)"
                 >
                   <Calculator className="size-3.5" />
                   카운트
@@ -266,7 +274,7 @@ export function ResultBar({
                   className="h-7 gap-1 px-2 text-xs"
                   disabled={!canStats}
                   onClick={() => setStatsOpen(true)}
-                  title="필드별 타입 분포·NULL 비율·상위 값"
+                  title={`필드별 타입 분포·NULL 비율·상위 값${sinkPaginatedNote}`}
                 >
                   <BarChart3 className="size-3.5" />
                   통계
@@ -279,7 +287,7 @@ export function ResultBar({
                   variant="ghost"
                   className="h-7 gap-1 px-2 text-xs"
                   disabled={!canExport || busy != null}
-                  title="결과를 파일로 내보내기"
+                  title={`결과를 파일로 내보내기${sinkPaginatedNote}`}
                 >
                   <Download className="size-3.5" />
                   내보내기

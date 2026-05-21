@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use firestore::FirestoreQuerySupport;
+use firestore::{FirestoreQueryDirection, FirestoreQueryOrder, FirestoreQuerySupport};
 use futures::StreamExt;
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -15,11 +15,12 @@ use tauri::{Emitter, Runtime};
 
 use uuid::Uuid;
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppError;
+use crate::firestore::cursor::{compute_pagination_hint, effective_order_by_fields, NAME_FIELD};
 use crate::firestore::{
     decode_document, extract_firestore_index_url, Document, FirestoreClient, ResultSink,
 };
-use crate::query::dsl::QueryDsl;
+use crate::query::dsl::{Cursor, QueryDsl};
 use crate::query::{post_filter, qualify_parent, translate, validate};
 use crate::state::StreamRegistry;
 
@@ -40,7 +41,13 @@ struct DonePayload {
     /// Firestore에서 가져온 전체 문서 수 (post_filter 없으면 total과 동일).
     scanned: usize,
     took_ms: u64,
+    /// 다음 페이지가 있을 가능성 — `dsl.limit`이 있고 `scanned >= limit`이며
+    /// cursor 추출이 가능했을 때만 true. 이 값이 true면 `cursor`도 포함된다.
     has_more: bool,
+    /// 다음 페이지를 받기 위한 cursor (있는 경우). 프론트는 동일 DSL의
+    /// `start_after`로 그대로 다시 전달한다.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cursor: Option<Cursor>,
 }
 
 /// `query:error:<sid>` 페이로드. `AppError`를 `#[serde(flatten)]`으로 펼치고
@@ -74,10 +81,34 @@ pub async fn run_query<R: Runtime>(
 
     // 누락 인덱스 안내 URL 등 보조 정보를 함께 전달하기 위해
     // (AppError, Option<index_url>) 튜플로 반환한다.
-    let outcome: Result<(usize, usize, bool), (AppError, Option<String>)> = async {
+    // Ok 페이로드는 (matched, scanned, cancelled, last_scanned_doc)로,
+    // 마지막 doc은 cursor 추출에 사용된다.
+    type RunOk = (
+        usize,
+        usize,
+        bool,
+        Option<gcloud_sdk::google::firestore::v1::Document>,
+    );
+    type RunErr = (AppError, Option<String>);
+    let outcome: Result<RunOk, RunErr> = async {
         validate(&dsl).map_err(|e| (e, None))?;
         let mut params = translate(&dsl).map_err(|e| (e, None))?;
         qualify_parent(&mut params, client.db.get_documents_path());
+        // 페이지네이션을 위해 dsl.limit이 있으면 params.order_by에
+        // `__name__ asc` tiebreaker를 보강한다. effective_order_by_fields와
+        // 일치하도록 한다(이미 들어 있으면 중복 추가 안 함).
+        if dsl.limit.is_some() {
+            let mut orders: Vec<FirestoreQueryOrder> =
+                params.order_by.take().unwrap_or_default();
+            let has_name = orders.iter().any(|o| o.field_name == NAME_FIELD);
+            if !has_name {
+                orders.push(FirestoreQueryOrder::from((
+                    NAME_FIELD.to_string(),
+                    FirestoreQueryDirection::Ascending,
+                )));
+            }
+            params.order_by = Some(orders);
+        }
         // validate가 컴파일 가능성을 보장하므로 여기서는 실패하지 않는다.
         let matcher = dsl
             .post_filter
@@ -118,6 +149,9 @@ pub async fn run_query<R: Runtime>(
         let mut matched: usize = 0;
         let mut scanned: usize = 0;
         let mut cancelled = false;
+        // cursor 추출용 — post_filter 통과 여부와 무관하게 scanned 순서의
+        // 마지막 protobuf 문서를 잡아둔다.
+        let mut last_scanned_proto: Option<gcloud_sdk::google::firestore::v1::Document> = None;
 
         while let Some(item) = stream.next().await {
             if registry.is_cancelled(&stream_id) {
@@ -136,6 +170,7 @@ pub async fn run_query<R: Runtime>(
             })?;
             let doc = decode_document(&item);
             scanned += 1;
+            last_scanned_proto = Some(item);
             let is_matched = matcher.as_ref().is_none_or(|m| m.matches(&doc.data));
             // sink는 scanned 전체를 기록 (matched 플래그로 source 구분).
             if let Some(sink) = sink.as_ref() {
@@ -176,20 +211,38 @@ pub async fn run_query<R: Runtime>(
                 },
             );
         }
-        Ok((matched, scanned, cancelled))
+        Ok((matched, scanned, cancelled, last_scanned_proto))
     }
     .await;
 
     registry.finish(&stream_id);
 
     match outcome {
-        Ok((matched, scanned, cancelled)) => {
+        Ok((matched, scanned, cancelled, last_scanned)) => {
             let took_ms = started.elapsed().as_millis() as u64;
+            let (has_more, cursor) =
+                compute_pagination_hint(&dsl, scanned, cancelled, last_scanned.as_ref());
+            // cursor 추출이 의도적으로 실패한 경우(nested 정렬 필드 등)는
+            // has_more가 false로 강등됐을 가능성이 있으므로 로그로 남긴다.
+            if scanned > 0
+                && dsl.limit.is_some_and(|l| scanned >= l as usize)
+                && !cancelled
+                && !has_more
+                && !effective_order_by_fields(&dsl).is_empty()
+            {
+                tracing::warn!(
+                    target: "query",
+                    stream_id = %stream_id,
+                    scanned,
+                    "pagination cursor could not be extracted (likely nested order_by); pagination disabled"
+                );
+            }
             tracing::info!(
                 target: "query",
                 count = matched,
                 scanned,
                 took_ms,
+                has_more,
                 stream_id = %stream_id,
                 op = "query_done",
                 "query finished"
@@ -201,7 +254,8 @@ pub async fn run_query<R: Runtime>(
                     total: matched,
                     scanned,
                     took_ms,
-                    has_more: cancelled,
+                    has_more,
+                    cursor,
                 },
             );
         }
