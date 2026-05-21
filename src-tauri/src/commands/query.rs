@@ -247,7 +247,17 @@ pub async fn query_count(
 ) -> AppResult<QueryCountResponse> {
     let client = state.sessions.firestore(session_id)?;
     validate(&dsl)?;
-    let mut params = translate(&dsl)?;
+    // 카운트는 "이 쿼리에 매칭되는 전체 문서 수"를 의미해야 하므로 페이지네이션
+    // 필드(limit/start_after/end_before)는 제거하고 처음부터 끝까지 스트리밍한다.
+    // 그렇지 않으면 결과 패널에서 fetchMore로 200건을 본 사용자가 카운트를
+    // 눌렀을 때 lastDsl.limit=100에 묶여 100으로 표시돼 혼란을 준다.
+    let count_dsl = QueryDsl {
+        limit: None,
+        start_after: None,
+        end_before: None,
+        ..dsl.clone()
+    };
+    let mut params = translate(&count_dsl)?;
     qualify_parent(&mut params, client.db.get_documents_path());
     let matcher = dsl
         .post_filter

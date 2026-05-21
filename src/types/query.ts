@@ -129,7 +129,10 @@ export type QueryDone = {
   /** Firestore에서 가져온 전체 건수 (post_filter 없으면 total과 동일). */
   scanned: number;
   took_ms: number;
+  /** 다음 페이지가 있을 가능성. true면 cursor가 함께 채워진다. (v0.11) */
   has_more: boolean;
+  /** 다음 페이지를 받기 위한 cursor (백엔드가 산출). `start_after`로 그대로 다시 전달. (v0.11) */
+  cursor?: Cursor;
 };
 
 /** FirestoreValue를 셀 표시용 짧은 문자열로. */
