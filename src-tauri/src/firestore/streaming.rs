@@ -20,7 +20,7 @@ use crate::firestore::{
     decode_document, extract_firestore_index_url, Document, FirestoreClient, ResultSink,
 };
 use crate::query::dsl::QueryDsl;
-use crate::query::{post_filter, translate, validate};
+use crate::query::{post_filter, qualify_parent, translate, validate};
 use crate::state::StreamRegistry;
 
 const PAGE: usize = 100;
@@ -76,7 +76,8 @@ pub async fn run_query<R: Runtime>(
     // (AppError, Option<index_url>) 튜플로 반환한다.
     let outcome: Result<(usize, usize, bool), (AppError, Option<String>)> = async {
         validate(&dsl).map_err(|e| (e, None))?;
-        let params = translate(&dsl).map_err(|e| (e, None))?;
+        let mut params = translate(&dsl).map_err(|e| (e, None))?;
+        qualify_parent(&mut params, client.db.get_documents_path());
         // validate가 컴파일 가능성을 보장하므로 여기서는 실패하지 않는다.
         let matcher = dsl
             .post_filter

@@ -24,7 +24,7 @@ use uuid::Uuid;
 use crate::error::{AppError, AppResult};
 use crate::firestore::decode_document;
 use crate::query::dsl::{ListenerDsl, QueryTarget};
-use crate::query::{translate, validate};
+use crate::query::{qualify_parent, translate, validate};
 
 /// gRPC target_id는 i32라서 우리 listener_id(UUID) 그대로 못 씀.
 /// 한 listener에는 단일 target만 등록하므로 충돌 위험 없는 고정 ID 사용.
@@ -211,7 +211,8 @@ pub async fn start_listener<R: Runtime>(
     }
 
     // 3) translate로 FirestoreQueryParams 생성 → fluent listen → add_target.
-    let params = translate(&query_dsl)?;
+    let mut params = translate(&query_dsl)?;
+    qualify_parent(&mut params, db.get_documents_path());
     let mut listener = db
         .create_listener(FirestoreMemListenStateStorage::new())
         .await

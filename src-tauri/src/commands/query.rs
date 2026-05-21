@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use firestore::{
-    FirestoreGetByIdSupport, FirestoreListCollectionIdsParams, FirestoreListingSupport,
-    FirestoreQuerySupport,
+    FirestoreGetByIdSupport, FirestoreListCollectionIdsParams, FirestoreListDocParams,
+    FirestoreListingSupport, FirestoreQuerySupport,
 };
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -22,7 +22,7 @@ use crate::firestore::{decode_document, Document, ExportFormat, ExportSource};
 use crate::query::dsl::QueryDsl;
 use crate::query::history::HistoryEntry;
 use crate::query::stats::{self, StatsReport};
-use crate::query::{post_filter, translate, validate};
+use crate::query::{post_filter, qualify_parent, translate, validate};
 use crate::state::AppState;
 
 #[tauri::command(rename_all = "snake_case")]
@@ -59,6 +59,50 @@ pub async fn list_subcollections(
             message: "failed to list subcollections".into(),
         })?;
     Ok(res.collection_ids)
+}
+
+#[derive(Serialize)]
+pub struct ListCollectionDocIdsResponse {
+    pub doc_ids: Vec<String>,
+    pub page_token: Option<String>,
+}
+
+/// 컬렉션 탐색용 가벼운 문서 ID 목록. `return_only_fields=[]`로 필드를
+/// 비워 이름만 받아오므로 트리 네비게이션 비용이 작다.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn list_collection_doc_ids(
+    state: State<'_, AppState>,
+    session_id: Uuid,
+    collection_id: String,
+    parent_path: Option<String>,
+    page_size: Option<usize>,
+    page_token: Option<String>,
+) -> AppResult<ListCollectionDocIdsResponse> {
+    let client = state.sessions.firestore(session_id)?;
+    let page_size = page_size.unwrap_or(100).clamp(1, 1000);
+    let mut list_params = FirestoreListDocParams::new(collection_id);
+    list_params.page_size = page_size;
+    list_params.page_token = page_token;
+    list_params.return_only_fields = Some(Vec::new());
+    if let Some(parent) = parent_path {
+        list_params.parent = Some(format!("{}/{}", client.db.get_documents_path(), parent));
+    }
+    let res = client
+        .db
+        .list_doc(list_params)
+        .await
+        .map_err(|_| AppError::Firestore {
+            message: "failed to list collection documents".into(),
+        })?;
+    let doc_ids = res
+        .documents
+        .into_iter()
+        .filter_map(|d| d.name.rsplit('/').next().map(String::from))
+        .collect();
+    Ok(ListCollectionDocIdsResponse {
+        doc_ids,
+        page_token: res.page_token,
+    })
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -203,7 +247,8 @@ pub async fn query_count(
 ) -> AppResult<QueryCountResponse> {
     let client = state.sessions.firestore(session_id)?;
     validate(&dsl)?;
-    let params = translate(&dsl)?;
+    let mut params = translate(&dsl)?;
+    qualify_parent(&mut params, client.db.get_documents_path());
     let matcher = dsl
         .post_filter
         .as_ref()

@@ -85,6 +85,7 @@ pub fn run() {
             commands::session::refresh_token,
             commands::query::list_collections,
             commands::query::list_subcollections,
+            commands::query::list_collection_doc_ids,
             commands::query::get_document,
             commands::query::query_documents,
             commands::query::cancel_stream,

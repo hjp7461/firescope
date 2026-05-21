@@ -251,8 +251,24 @@ fn resolve_collection(
     }
 }
 
+/// firestore crate가 `FirestoreQueryParams.parent`를 그대로 gRPC `parent`
+/// 필드에 넣기 때문에, 서브컬렉션 쿼리(예: `Hospital/abc/ActivityLog`)는
+/// `projects/X/databases/Y/documents/`로 시작하는 절대 경로가 필요하다.
+/// 호출부는 `client.db.get_documents_path()`를 넘겨 이 함수를 한 번 통과
+/// 시켜야 한다.
+pub fn qualify_parent(params: &mut FirestoreQueryParams, documents_path: &str) {
+    if let Some(parent) = params.parent.as_mut() {
+        if !parent.starts_with("projects/") {
+            *parent = format!("{documents_path}/{parent}");
+        }
+    }
+}
+
 /// 검증을 통과한 DSL을 firestore 쿼리 파라미터로 변환한다.
 /// (호출 전 `query::validate`로 제약을 확인했다고 가정)
+///
+/// 결과의 `parent`는 **상대 경로**(예: `Hospital/abc`)이므로,
+/// 실제 호출 전에 [`qualify_parent`]로 절대 경로로 승격해야 한다.
 pub fn translate(dsl: &QueryDsl) -> AppResult<FirestoreQueryParams> {
     let (parent, collection_id, all_descendants) = resolve_collection(&dsl.target)?;
 

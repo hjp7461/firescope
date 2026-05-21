@@ -14,5 +14,5 @@ pub mod validate;
 
 #[allow(unused_imports)]
 pub use dsl::QueryDsl;
-pub use translate::translate;
+pub use translate::{qualify_parent, translate};
 pub use validate::validate;

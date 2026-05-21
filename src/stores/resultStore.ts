@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { cancelStream, queryDocuments } from "@/ipc/query";
+import { cancelStream, getDocument, queryDocuments } from "@/ipc/query";
 import { startListener, stopListener } from "@/ipc/listener";
 import { getActiveSession, registerTabCloseCleanup, useTabsStore, type TabId } from "@/stores/tabsStore";
 import { useHistoryStore } from "@/stores/historyStore";
@@ -58,6 +58,8 @@ type ResultState = ResultSlice & {
   byTab: Map<TabId, ResultSlice>;
   runCollectionQuery: (path: string) => Promise<void>;
   runDsl: (dsl: QueryDsl) => Promise<void>;
+  /** 단일 문서를 가져와 결과 패널에 1행으로 표시 (트리에서 문서 노드 선택용). */
+  selectDocument: (path: string) => Promise<void>;
   cancel: () => Promise<void>;
   reset: () => void;
   dropTab: (tabId: TabId) => void;
@@ -220,6 +222,56 @@ export const useResultStore = create<ResultState>((set, get) => ({
 
   runCollectionQuery: async (path) => {
     await get().runDsl({ target: { kind: "collection", path }, limit: 100 });
+  },
+
+  selectDocument: async (path) => {
+    const tabId = useTabsStore.getState().activeTabId;
+    if (!tabId) return;
+    // 진행 중 스트림/listener는 정리 — 단일 문서 표시 모드로 전환.
+    const prev = get().byTab.get(tabId);
+    if (prev?.streamId) await teardownStream(prev.streamId);
+    if (prev?.listenerId) {
+      await stopListener(prev.listenerId).catch(() => undefined);
+      await teardownListener(prev.listenerId);
+    }
+    try {
+      const doc = await getDocument(path);
+      set((s) =>
+        setSlice(s, tabId, {
+          streamId: null,
+          collectionPath: path,
+          lastDsl: null,
+          rows: doc ? [doc] : [],
+          status: "done",
+          total: doc ? 1 : 0,
+          scanned: doc ? 1 : 0,
+          tookMs: null,
+          error: doc ? null : "문서를 찾을 수 없습니다.",
+          indexUrl: null,
+          listenerId: null,
+          listenerStatus: null,
+          listenerEventCount: 0,
+        }),
+      );
+    } catch (err) {
+      set((s) =>
+        setSlice(s, tabId, {
+          streamId: null,
+          collectionPath: path,
+          lastDsl: null,
+          rows: [],
+          status: "error",
+          total: 0,
+          scanned: 0,
+          tookMs: null,
+          error: toKoreanMessage(err),
+          indexUrl: null,
+          listenerId: null,
+          listenerStatus: null,
+          listenerEventCount: 0,
+        }),
+      );
+    }
   },
 
   cancel: async () => {
