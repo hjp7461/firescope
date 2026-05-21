@@ -129,7 +129,7 @@ pub struct OrderBy {
     pub direction: Direction,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Cursor {
     DocumentRef { path: String },

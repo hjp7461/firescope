@@ -5,6 +5,7 @@
 //! 페이지네이션 스트리밍(`streaming`)으로 결과를 이벤트 전송한다.
 
 pub mod connection;
+pub mod cursor;
 pub mod decode;
 pub mod index_hint;
 pub mod listener;
