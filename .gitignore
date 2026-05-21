@@ -6,6 +6,11 @@ dist/
 .env.local
 .env.*.local
 
+# --- TypeScript build artifacts ---
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+
 # --- Rust / Tauri ---
 src-tauri/target/
 src-tauri/Cargo.lock
