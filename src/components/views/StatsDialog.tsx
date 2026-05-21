@@ -120,7 +120,7 @@ export function StatsDialog({ open, onOpenChange }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <BarChart3 className="size-5" />
@@ -219,18 +219,18 @@ export function StatsDialog({ open, onOpenChange }: Props) {
           </div>
         )}
 
-        <div className="min-h-[20rem]">
+        <div className="flex min-h-0 flex-1 flex-col">
           {isStreaming || busy ? (
-            <div className="flex h-72 items-center justify-center gap-2 text-sm text-muted-foreground">
+            <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" />
               {isStreaming ? "샘플 수집 중…" : "통계 계산 중…"}
             </div>
           ) : fields.length === 0 ? (
-            <div className="flex h-72 items-center justify-center text-sm text-muted-foreground">
+            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
               표시할 필드가 없습니다.
             </div>
           ) : (
-            <ScrollArea className="h-[28rem] pr-3">
+            <ScrollArea className="min-h-0 flex-1 pr-3">
               <ul className="space-y-3">
                 {fields.map((f) => (
                   <FieldRow key={f.key} stat={f} sampleSize={report!.sample_size} />
@@ -240,7 +240,7 @@ export function StatsDialog({ open, onOpenChange }: Props) {
           )}
         </div>
 
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex shrink-0 justify-end gap-2 pt-2">
           <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
             닫기
           </Button>
